@@ -29,6 +29,8 @@ export function hookScriptPath(): string {
   return join(here, "..", "hooks", "session-hook.mjs");
 }
 
+/** POSIX sh quoting (macOS/Linux). NOT valid for Windows cmd.exe — backslash paths
+ *  like `C:\Program Files\nodejs\node.exe` would break, so install is skipped on win32. */
 function shquote(s: string): string {
   return `"${s.replace(/(["\\$`])/g, "\\$1")}"`;
 }
@@ -53,6 +55,14 @@ export async function installLivenessHooks(opts?: {
   const settingsPath = opts?.settingsPath ?? join(homedir(), ".claude", "settings.json");
   const scriptPath = opts?.scriptPath ?? hookScriptPath();
   const node = opts?.node ?? process.execPath;
+
+  // Windows agent host is unsupported: the hook command quoting below is POSIX sh
+  // only. Skip cleanly rather than write broken hooks into the user's settings.
+  // (The phone/browser client is unaffected — only the machine running Claude Code
+  // sessions matters, which this project targets as macOS/Linux.)
+  if (process.platform === "win32") {
+    return { installed: false, settingsPath, scriptPath, reason: "windows agent host unsupported" };
+  }
 
   try {
     await fs.access(scriptPath);

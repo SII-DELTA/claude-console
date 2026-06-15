@@ -42,12 +42,13 @@
 ### 前置
 - Node.js ≥ 20、pnpm ≥ 10
 - `claude` CLI 已登录（agent 复用本机凭据，零配置）
+- **agent 运行主机：macOS / Linux**。会话「运行态」依赖 agent 启动时自动安装的 Claude lifecycle hooks（写入 user 级 `~/.claude/settings.json`，幂等、保留你既有配置）；**Windows 作为 agent 主机暂不支持自动安装 hook**（运行态会退回 mtime 兜底）。
 - 复制 `.env.example` 为 `.env`（按需配置，见[配置](#配置)）
 
 ### 安装与测试
 ```bash
 pnpm install
-pnpm test            # shared + local-agent + web，共 107 测试
+pnpm test            # shared + local-agent + web，共 130 测试
 ```
 
 ### 本地运行
