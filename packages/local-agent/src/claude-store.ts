@@ -41,6 +41,11 @@ export class ClaudeStore {
   private activeDir: string | null = null;
   /** predicate injected by the runtime: is this session driven by our agent? */
   private drivenPredicate: ((id: string) => boolean) | null = null;
+  /** predicate injected by the runtime: is our agent actively running a turn for it? */
+  private drivingPredicate: ((id: string) => boolean) | null = null;
+  /** predicates injected by the runtime: hook-derived liveness (any entrypoint). */
+  private livenessBusyPredicate: ((id: string) => boolean) | null = null;
+  private livenessAlivePredicate: ((id: string) => boolean) | null = null;
   /** AskUserQuestion ids the user dismissed → excluded from the "question" attention */
   private dismissedQuestions = new Set<string>();
 
@@ -63,6 +68,17 @@ export class ClaudeStore {
   /** Lets the runtime tell us which sessions our own driver currently owns. */
   setDrivenPredicate(fn: (id: string) => boolean): void {
     this.drivenPredicate = fn;
+  }
+
+  /** Lets the runtime tell us which sessions our driver has a turn in flight for. */
+  setDrivingPredicate(fn: (id: string) => boolean): void {
+    this.drivingPredicate = fn;
+  }
+
+  /** Hook-derived liveness (covers terminal/VSCode/our-own sessions uniformly). */
+  setLivenessPredicates(busy: (id: string) => boolean, alive: (id: string) => boolean): void {
+    this.livenessBusyPredicate = busy;
+    this.livenessAlivePredicate = alive;
   }
 
   /** Seed the dismissed-question set (from durable storage at startup). */
@@ -235,7 +251,14 @@ export class ClaudeStore {
     if (acc.messageCount === 0) return null;
     const updatedAt =
       acc.lastTimestamp ?? (mtimeMs ? new Date(mtimeMs).toISOString() : new Date(0).toISOString());
-    const isLive = mtimeMs != null && nowMs() - mtimeMs < LIVE_WINDOW_MS;
+    const drivenByAgent = this.drivenPredicate?.(id) ?? false;
+    // "Running a turn now" — union of the hook-derived state (any entrypoint) and our
+    // own driver (instant, no hook install/restart needed). Authoritative; not mtime.
+    const driving = (this.livenessBusyPredicate?.(id) ?? false) || (this.drivingPredicate?.(id) ?? false);
+    // "Has a live process" — hook-tracked liveness, or our own warm proc, or (fallback
+    // for sessions started before hooks were installed) a recently-written jsonl.
+    const mtimeFresh = mtimeMs != null && nowMs() - mtimeMs < LIVE_WINDOW_MS;
+    const isLive = (this.livenessAlivePredicate?.(id) ?? false) || drivenByAgent || driving || mtimeFresh;
     return {
       id,
       title: deriveTitle(acc, id),
@@ -249,7 +272,8 @@ export class ClaudeStore {
       toolUseCount: acc.toolUseCount,
       modelId: acc.modelId,
       isLive,
-      drivenByAgent: this.drivenPredicate?.(id) ?? false,
+      driving,
+      drivenByAgent,
       preview: acc.firstUserText?.slice(0, 140),
       attention: deriveAttention(acc, isLive, this.dismissedQuestions),
     };

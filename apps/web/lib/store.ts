@@ -590,6 +590,16 @@ function handleServerMessage(
       }
       break;
     }
+    case "server:claude_driving": {
+      // authoritative real-time run state (hook ∪ our driver). Patch the field so the
+      // dashboard "正在运行" and the chat loading indicator update without a poll.
+      set({
+        sessions: get().sessions.map((s) =>
+          s.id === msg.sessionId ? { ...s, driving: msg.driving } : s,
+        ),
+      });
+      break;
+    }
     case "server:claude_message": {
       const st = get();
       if (msg.sessionId !== st.selectedId) break;

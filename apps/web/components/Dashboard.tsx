@@ -180,7 +180,9 @@ export function Dashboard({
 
   const needs = sessions.map((s) => ({ s, k: attentionOf(s) })).filter((x): x is { s: ClaudeSession; k: AttKind } => x.k != null);
   const needIds = new Set(needs.map((x) => x.s.id));
-  const running = sessions.filter((s) => s.isLive && !needIds.has(s.id));
+  // "正在运行" = a turn is actively in flight (hook ∪ our driver). NOT isLive — that
+  // also counts idle-but-attached sessions (e.g. many open VSCode tabs), over-reporting.
+  const running = sessions.filter((s) => s.driving && !needIds.has(s.id));
   const runIds = new Set(running.map((s) => s.id));
   const recentDone = sessions.filter((s) => !needIds.has(s.id) && !runIds.has(s.id)).slice(0, RECENT_LIMIT);
 

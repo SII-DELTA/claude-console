@@ -159,6 +159,9 @@ export class WsBridge {
       bus.on("claude:drive_error", (sessionId, message, timestamp) =>
         this.broadcast({ type: "server:claude_drive_error", sessionId, message, timestamp }),
       ),
+      bus.on("claude:driving", (sessionId, driving) =>
+        this.broadcast({ type: "server:claude_driving", sessionId, driving }),
+      ),
       bus.on("claude:rate_limit", (info) =>
         this.broadcast({ type: "server:claude_rate_limit", ...info }),
       ),

@@ -18,6 +18,7 @@ beforeEach(async () => {
     workspaceRoot: storage,
     storagePath: storage,
     enableFileWatcher: false,
+    enableSessionLiveness: false,
     ptyFactory: mock.factory,
     allowedOrigins: ["*"],
     password: "test-pw", // enforce auth so the 401/bearer checks apply

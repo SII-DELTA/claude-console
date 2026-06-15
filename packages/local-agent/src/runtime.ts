@@ -10,6 +10,8 @@ import { WsBridge } from "./ws-bridge.js";
 import { buildHttpApp } from "./http-server.js";
 import { ClaudeStore } from "./claude-store.js";
 import { ClaudeDriver } from "./claude-driver.js";
+import { SessionLiveness } from "./session-liveness.js";
+import { installLivenessHooks } from "./hooks-installer.js";
 import type { AgentSession } from "@mac/shared";
 import type { PtyFactory } from "./pty.js";
 
@@ -27,6 +29,8 @@ export interface AgentRuntimeConfig {
   whisperApiKey?: string;
   /** Password login. Defaults to MAC_AGENT_PASSWORD. Unset → open access (no login). */
   password?: string;
+  /** Install lifecycle hooks + watch session-state for run status. Default true; tests pass false. */
+  enableSessionLiveness?: boolean;
 }
 
 export interface AgentRuntimeHandle {
@@ -76,6 +80,32 @@ export async function startAgent(config: AgentRuntimeConfig): Promise<AgentRunti
   });
   // let session metadata report which live sessions our own driver owns
   claude.setDrivenPredicate((id) => driver.owns(id));
+  // authoritative "running" signal: a turn is in flight for this session, even if the
+  // jsonl hasn't been flushed recently (long silent tool/bash). Keeps such sessions
+  // showing as live instead of falsely flipping to "stopped" via mtime alone.
+  claude.setDrivingPredicate((id) => driver.isDriving(id));
+  // hook-derived liveness covers terminal/VSCode/our-own sessions uniformly (event
+  // driven, no mtime polling). Union'd with the driver signal in buildSession.
+  const liveness = new SessionLiveness(bus);
+  const livenessEnabled = config.enableSessionLiveness !== false;
+  if (livenessEnabled) {
+    liveness.start();
+    claude.setLivenessPredicates(
+      (id) => liveness.isBusy(id),
+      (id) => liveness.isAlive(id),
+    );
+    // install the lifecycle hooks into the user-level settings (idempotent, best-effort)
+    void installLivenessHooks().then(
+      (r) => {
+        if (r.installed) {
+          console.log(`[agent] 已安装会话运行态 hooks → ${r.settingsPath}（已在运行的会话需重启才纳管）`);
+        } else if (r.reason && r.reason !== "already installed") {
+          console.warn(`[agent] 会话运行态 hooks 未安装：${r.reason}`);
+        }
+      },
+      (e) => console.warn(`[agent] 安装会话运行态 hooks 失败：${e instanceof Error ? e.message : e}`),
+    );
+  }
   // restore dismissed questions so they stay cleared across restarts
   claude.setDismissedQuestions(store.listDismissedQuestionIds());
   const password = config.password ?? process.env.MAC_AGENT_PASSWORD;
@@ -157,6 +187,7 @@ export async function startAgent(config: AgentRuntimeConfig): Promise<AgentRunti
     async stop() {
       sessions.destroyAll();
       driver.destroyAll();
+      liveness.stop();
       await claude.stop();
       await ws.close();
       await tracker?.stop();

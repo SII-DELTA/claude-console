@@ -385,7 +385,10 @@ function Console() {
                   />
                 </div>
               )}
-              {externalLive && driveStatus === "idle" && (
+              {/* A turn is running but we hold no local stream — e.g. driven from a
+                  terminal, or we just reloaded/reconnected mid-turn. The authoritative
+                  `driving` flag (hook ∪ driver) keeps the loading indicator reliable. */}
+              {driveStatus !== "streaming" && (selected?.driving || externalLive) && (
                 <div className="mt-4">
                   <LoadingBadge />
                 </div>

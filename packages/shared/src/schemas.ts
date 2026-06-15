@@ -77,6 +77,8 @@ export const ClaudeSessionSchema = z.object({
   isLive: z.boolean(),
   /** 该 live 是由本 agent 的 driver 进程驱动的（而非终端等外部）。 */
   drivenByAgent: z.boolean().optional(),
+  /** 本 agent 的 driver 此刻正在跑一轮（write→done 之间）。权威的"运行中"信号。 */
+  driving: z.boolean().optional(),
   preview: z.string().optional(),
   /**
    * 该会话是否需要用户关注（供监控台跨会话聚合，无需点进会话即可判断）：
@@ -500,6 +502,13 @@ export const ServerClaudePermissionCancelSchema = z.object({
   requestId: z.string().min(1),
 });
 
+/** Authoritative "a turn is (not) running" signal for a session. */
+export const ServerClaudeDrivingSchema = z.object({
+  type: z.literal("server:claude_driving"),
+  sessionId: z.string().min(1),
+  driving: z.boolean(),
+});
+
 export const ServerErrorSchema = z.object({
   type: z.literal("server:error"),
   message: z.string(),
@@ -528,6 +537,7 @@ export const ServerMessageSchema = z.discriminatedUnion("type", [
   ServerClaudeRateLimitSchema,
   ServerClaudePermissionRequestSchema,
   ServerClaudePermissionCancelSchema,
+  ServerClaudeDrivingSchema,
   ServerErrorSchema,
   ServerPongSchema,
 ]);

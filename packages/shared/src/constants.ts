@@ -16,8 +16,10 @@ export const PAIR_CODE_TTL_MS = 5 * 60_000;
 export const MAX_LOG_BUFFER_PER_SESSION = 5_000;
 
 /** Claude 会话文件 mtime 在该窗口内视为「活跃」(可能有进程在写)。
- * 仅作提示：自然停顿可能误判，最终安全靠 continue 的 force 显式确认。 */
-export const LIVE_WINDOW_MS = 30_000;
+ * 90s 给长任务/工具调用的静默期留足余量，减少「明明在跑却判为停止」的误判；
+ * 本端会话另有 driver.isDriving 权威信号兜底（见 claude-store.buildSession）。
+ * 仅作提示：最终安全仍靠 continue 的 force 显式确认。 */
+export const LIVE_WINDOW_MS = 90_000;
 
 export const ERROR_CODES = {
   UNAUTHORIZED: "unauthorized",

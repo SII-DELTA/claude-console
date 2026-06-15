@@ -195,6 +195,15 @@ export class ClaudeDriver {
     return this.procs.get(sessionId)?.busy ?? false;
   }
 
+  /** Toggle the authoritative "a turn is running" flag, emitting `claude:driving`
+   *  only on an actual transition (de-duped) so the ws broadcast isn't spammed. */
+  private setBusy(sessionId: string, busy: boolean): void {
+    const w = this.procs.get(sessionId);
+    const prev = w?.busy ?? false;
+    if (w) w.busy = busy;
+    if (prev !== busy) this.opts.bus.emit("claude:driving", sessionId, busy);
+  }
+
   /** True when this agent owns a warm process for the session (busy or idle). */
   owns(sessionId: string): boolean {
     return this.procs.has(sessionId);
@@ -256,14 +265,17 @@ export class ClaudeDriver {
       w.stderr += c.toString();
     });
     proc.on("error", (err) => {
+      this.setBusy(sessionId, false); // turn died → clear "running"
       this.clearPending(sessionId);
       this.procs.delete(sessionId);
       this.opts.bus.emit("claude:drive_error", sessionId, err.message, now());
     });
     proc.on("close", (code) => {
+      const wasBusy = w.busy;
+      this.setBusy(sessionId, false); // turn ended (crash/exit) → clear "running"
       this.clearPending(sessionId);
       const existed = this.procs.delete(sessionId);
-      if (existed && w.busy && code !== 0) {
+      if (existed && wasBusy && code !== 0) {
         const msg = w.stderr.trim() || `claude exited with code ${code}`;
         this.opts.bus.emit("claude:drive_error", sessionId, msg, now());
       }
@@ -274,7 +286,7 @@ export class ClaudeDriver {
   private write(sessionId: string, prompt: string, images?: ClaudeImage[]): boolean {
     const w = this.procs.get(sessionId);
     if (!w || w.proc.stdin.destroyed) return false;
-    w.busy = true;
+    this.setBusy(sessionId, true); // authoritative "a turn started"
     this.touch(sessionId);
     const content: unknown[] = [];
     for (const img of images ?? []) {
@@ -315,10 +327,8 @@ export class ClaudeDriver {
           break;
         case "done": {
           const w = this.procs.get(sessionId);
-          if (w) {
-            w.busy = false;
-            w.resumeAnswers = undefined; // drop any unconsumed recovery answer
-          }
+          if (w) w.resumeAnswers = undefined; // drop any unconsumed recovery answer
+          this.setBusy(sessionId, false); // authoritative "the turn finished"
           // turn finished ⇒ no question can still be pending; clear durable rows
           this.opts.pendingStore?.deletePendingPermissionsBySession(sessionId);
           this.touch(sessionId); // keep warm; arm idle timer

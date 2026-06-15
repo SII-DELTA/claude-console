@@ -48,6 +48,8 @@ export type BusEvents = {
   ) => void;
   /** A pending permission request is no longer waiting (answered/cancelled/aborted). */
   "claude:permission_cancel": (sessionId: string, requestId: string) => void;
+  /** Authoritative "a turn started/stopped" signal (driver busy transition). */
+  "claude:driving": (sessionId: string, driving: boolean) => void;
   "device:pair_request": (info: { deviceName: string; platform: string; pairCode: string }) => void;
   "device:paired": (deviceId: string) => void;
 };
