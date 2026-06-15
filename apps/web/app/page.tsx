@@ -16,6 +16,7 @@ import { BottomTabs } from "../components/BottomTabs";
 import { Dashboard } from "../components/Dashboard";
 import { SettingsPage } from "../components/SettingsPage";
 import { notify } from "../lib/notify";
+import { useEdgeSwipeBack } from "../lib/useEdgeSwipeBack";
 
 export default function Page() {
   const hydrated = useHydrated();
@@ -232,6 +233,9 @@ function Console() {
     setComposeNew(false);
   }
 
+  // Mobile: 从屏幕左/右边缘水平滑动返回（跟手位移 + 回弹）。
+  const { ref: swipeRef, dx: swipeDx } = useEdgeSwipeBack(mobileDetail, goBack);
+
   return (
     <div className="flex h-screen overflow-hidden bg-bg text-ink flex-col md:flex-row">
       {/* Sidebar (desktop) / Drawer (mobile) */}
@@ -260,8 +264,6 @@ function Console() {
           <HomeHeader
             title={mobileTab === "dashboard" ? "Claude Console" : mobileTab === "sessions" ? "Sessions" : "Settings"}
             wsConnected={wsConnected}
-            attentionCount={attentionCount}
-            onBell={() => setMobileTab("dashboard")}
           />
           <div className="min-h-0 flex-1">
             {mobileTab === "dashboard" && (
@@ -303,13 +305,19 @@ function Console() {
               />
             )}
           </div>
-          <BottomTabs active={mobileTab} onChange={setMobileTab} />
+          <BottomTabs active={mobileTab} onChange={setMobileTab} badges={{ dashboard: attentionCount }} />
         </div>
       )}
 
       {/* Main chat column — desktop always; mobile only in detail view */}
       <main
+        ref={swipeRef}
         className={`min-h-0 min-w-0 flex-1 flex-col md:flex ${mobileDetail ? "flex" : "hidden"}`}
+        style={
+          swipeDx
+            ? { transform: `translateX(${swipeDx}px)`, transition: "none" }
+            : { transition: "transform 0.2s ease-out" }
+        }
       >
         {/* Mobile header */}
         <header className="flex shrink-0 items-center gap-2 border-b border-line bg-bg-alt px-2 py-2 pt-safe md:hidden">
@@ -513,17 +521,14 @@ function Console() {
 }
 
 // Shared mobile home header — logo + title, then a unified right cluster:
-// usage 余量 → connection dot → notification bell (badge) → refresh.
+// usage 余量 → connection dot → refresh. (Needs-attention count lives on the
+// bottom 监控台 tab badge, not a header bell.)
 function HomeHeader({
   title,
   wsConnected,
-  attentionCount,
-  onBell,
 }: {
   title: string;
   wsConnected: boolean;
-  attentionCount: number;
-  onBell: () => void;
 }) {
   return (
     <header className="flex shrink-0 items-center gap-2 border-b border-line bg-bg-alt px-3 py-2.5 pt-safe">
@@ -532,21 +537,6 @@ function HomeHeader({
       <div className="ml-auto flex items-center gap-1.5">
         <UsageDisplay />
         <ConnDot ok={wsConnected} />
-        <button
-          onClick={onBell}
-          aria-label="需要处理的会话"
-          className="relative flex h-9 w-9 items-center justify-center rounded-xl border border-line text-ink-dim transition-colors hover:bg-bg-raised hover:text-ink"
-        >
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
-            <path d="M13.7 21a2 2 0 0 1-3.4 0" />
-          </svg>
-          {attentionCount > 0 && (
-            <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-accent px-1 text-[10px] font-semibold text-white">
-              {attentionCount > 9 ? "9+" : attentionCount}
-            </span>
-          )}
-        </button>
         <RefreshButton />
       </div>
     </header>
