@@ -537,6 +537,14 @@ function handleServerMessage(
   switch (msg.type) {
     case "server:claude_session_updated": {
       set({ sessions: upsertSession(get().sessions, msg.session) });
+      // Authoritative reconciliation: the session JSONL drives the "question"
+      // attention flag (cleared once a non-error answer lands). If it's no longer
+      // a question, drop any lingering picker we may hold — covers a missed
+      // permission_cancel (brief disconnect) or an answer made on another client.
+      const p = get().pendingPermission;
+      if (p && p.sessionId === msg.session.id && msg.session.attention !== "question") {
+        set({ pendingPermission: null });
+      }
       break;
     }
     case "server:claude_message": {
