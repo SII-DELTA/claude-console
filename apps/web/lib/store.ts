@@ -131,8 +131,9 @@ interface AppState {
   selectSession: (id: string | null) => Promise<void>;
   /** load one older page of messages (prepended) for the selected session */
   loadEarlier: () => Promise<void>;
-  /** Send a prompt: resumes selected session, or starts a new one if none selected. */
-  sendPrompt: (prompt: string, opts?: { force?: boolean; images?: ClaudeImage[] }) => Promise<void>;
+  /** Send a prompt: resumes selected session, or starts a new one if none selected.
+   *  Resolves true on success, false on failure (so the composer can keep the draft). */
+  sendPrompt: (prompt: string, opts?: { force?: boolean; images?: ClaudeImage[] }) => Promise<boolean>;
   interrupt: () => Promise<void>;
   /** Answer the pending interactive permission (方案 B). */
   answerPermission: (answers: Record<string, string | string[]>) => Promise<void>;
@@ -384,7 +385,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   async sendPrompt(prompt, opts) {
     const api = get().api;
-    if (!api || !prompt.trim()) return;
+    if (!api || !prompt.trim()) return false;
     ensureNotificationPermission(); // first send is a user gesture
     const selected = get().selectedId;
     const images = opts?.images;
@@ -417,6 +418,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           stream: s.stream ? { ...s.stream, sessionId: s.stream.sessionId ?? sessionId } : s.stream,
         }));
       }
+      return true;
     } catch (err) {
       set({
         driveStatus: "idle",
@@ -432,6 +434,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       } else {
         set({ error: describeError(err) });
       }
+      return false;
     }
   },
 

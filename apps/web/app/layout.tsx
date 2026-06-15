@@ -30,6 +30,10 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   viewportFit: "cover",
+  // When the soft keyboard opens, shrink the layout viewport (not just the visual
+  // one) so our height-driven flex layout collapses to the visible area and the
+  // composer pins right above the keyboard instead of being pushed off-screen.
+  interactiveWidget: "resizes-content",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

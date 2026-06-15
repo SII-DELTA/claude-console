@@ -26,13 +26,21 @@ export class ApiClient {
     this.token = token;
   }
 
-  private async request<T>(method: string, pathname: string, body?: unknown): Promise<T> {
+  private async request<T>(
+    method: string,
+    pathname: string,
+    body?: unknown,
+    opts?: { timeoutMs?: number },
+  ): Promise<T> {
     const headers: Record<string, string> = {};
     if (this.token) headers.authorization = `Bearer ${this.token}`;
     if (body !== undefined) headers["content-type"] = "application/json";
-    // fail fast instead of hanging forever when the agent isn't reachable
+    // fail fast instead of hanging forever when the agent isn't reachable.
+    // Default 12s for light GETs; heavy mutations (new/continue) pass a longer
+    // budget — a cold `claude --resume` (process spawn + large jsonl parse over a
+    // remote Tailscale link) legitimately needs more than 12s before it acks.
     const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), 12_000);
+    const timer = setTimeout(() => ac.abort(), opts?.timeoutMs ?? 12_000);
     let res: Response;
     try {
       res = await fetch(`${this.baseUrl}${pathname}`, {
@@ -131,7 +139,7 @@ export class ApiClient {
     if (cwd) body.cwd = cwd;
     if (images?.length) body.images = images;
     if (permissionMode) body.permissionMode = permissionMode;
-    return this.request("POST", "/claude/sessions", body);
+    return this.request("POST", "/claude/sessions", body, { timeoutMs: 45_000 });
   }
 
   /** Resume an existing session. Throws ApiError(409) if live and !force. */
@@ -146,7 +154,7 @@ export class ApiClient {
     if (force) body.force = force;
     if (images?.length) body.images = images;
     if (permissionMode) body.permissionMode = permissionMode;
-    return this.request("POST", `/claude/sessions/${id}/continue`, body);
+    return this.request("POST", `/claude/sessions/${id}/continue`, body, { timeoutMs: 45_000 });
   }
 
   interruptClaudeSession(id: string): Promise<{ ok: true }> {

@@ -24,7 +24,7 @@ export function Composer({
   placeholder,
   prefill,
 }: {
-  onSend: (text: string, images?: ClaudeImage[]) => void;
+  onSend: (text: string, images?: ClaudeImage[]) => void | boolean | Promise<void | boolean>;
   onInterrupt: () => void;
   streaming: boolean;
   disabled?: boolean;
@@ -77,7 +77,27 @@ export function Composer({
   function submit() {
     const t = text.trim();
     if ((!t && images.length === 0) || disabled) return;
-    onSend(t || "(见图片)", images.length ? images.map(({ mediaType, dataBase64 }) => ({ mediaType, dataBase64 })) : undefined);
+    const snapText = text;
+    const snapImages = images;
+    // Optimistically clear (keeps the instant feel + the optimistic bubble). If the
+    // send reports failure, restore the draft so nothing the user typed is lost.
+    Promise.resolve(
+      onSend(
+        t || "(见图片)",
+        images.length ? images.map(({ mediaType, dataBase64 }) => ({ mediaType, dataBase64 })) : undefined,
+      ),
+    )
+      .then((ok) => {
+        if (ok === false) {
+          setText(snapText);
+          setImages(snapImages);
+          requestAnimationFrame(() => textareaRef.current?.focus());
+        }
+      })
+      .catch(() => {
+        setText(snapText);
+        setImages(snapImages);
+      });
     setText("");
     setImages([]);
   }

@@ -130,20 +130,29 @@ function Console() {
   // reset the takeover arm whenever the selected session changes
   useEffect(() => setTakeoverArmed(false), [selectedId]);
 
-  // Pin layout to the real visible height. iOS Safari's `dvh` lags behind the
-  // dynamic toolbar (bottom bar drifts / needs a pull to settle), so drive the
-  // height off window.innerHeight and update on resize/visualViewport changes.
+  // Pin layout to the real visible height. `dvh`/`innerHeight` both lag the dynamic
+  // toolbar and don't account for the soft keyboard, so drive height + top offset
+  // off the visualViewport: its height is the area not covered by the keyboard, and
+  // its offsetTop is how far the page is shifted (iOS keyboard overlay). The root
+  // container follows both so the composer always sits right above the keyboard.
   useEffect(() => {
-    const setH = () =>
-      document.documentElement.style.setProperty("--app-height", `${window.innerHeight}px`);
+    const root = document.documentElement;
+    const setH = () => {
+      const vv = window.visualViewport;
+      const h = vv ? vv.height : window.innerHeight;
+      root.style.setProperty("--app-height", `${h}px`);
+      root.style.setProperty("--vv-offset", `${vv ? vv.offsetTop : 0}px`);
+    };
     setH();
     window.addEventListener("resize", setH);
     window.addEventListener("orientationchange", setH);
     window.visualViewport?.addEventListener("resize", setH);
+    window.visualViewport?.addEventListener("scroll", setH);
     return () => {
       window.removeEventListener("resize", setH);
       window.removeEventListener("orientationchange", setH);
       window.visualViewport?.removeEventListener("resize", setH);
+      window.visualViewport?.removeEventListener("scroll", setH);
     };
   }, []);
 
@@ -213,7 +222,12 @@ function Console() {
     hadQuestion.current = has;
   }, [pendingQuestions, selected?.title]);
 
-  function handleSend(text: string, images?: import("@mac/shared").ClaudeImage[]) {
+  // Returns true on success; false lets the composer restore the user's draft so a
+  // failed/timed-out send never silently eats what they typed.
+  async function handleSend(
+    text: string,
+    images?: import("@mac/shared").ClaudeImage[],
+  ): Promise<boolean> {
     // 方案 B: a picker is awaiting a live control_request. A free-text reply is the
     // answer to that question (same-turn resume) — route it through answerPermission
     // so the CLI unblocks and the picker dismisses, instead of sending a new prompt.
@@ -221,10 +235,10 @@ function Console() {
       const answers: Record<string, string | string[]> = {};
       for (const q of bPermission.questions) answers[q.question] = q.multiSelect ? [text] : text;
       void answerPermission(answers);
-      return;
+      return true;
     }
     // when armed (or taking over external-live), force the resume
-    void sendPrompt(text, { force: externalLive || undefined, images });
+    return await sendPrompt(text, { force: externalLive || undefined, images });
   }
 
   function selectAndClose(id: string) {
@@ -245,7 +259,10 @@ function Console() {
   return (
     <div
       className="flex overflow-hidden bg-bg text-ink flex-col md:flex-row"
-      style={{ height: "var(--app-height, 100dvh)" }}
+      style={{
+        height: "var(--app-height, 100dvh)",
+        transform: "translateY(var(--vv-offset, 0px))",
+      }}
     >
       {/* Sidebar (desktop) / Drawer (mobile) */}
       <aside className="hidden w-72 shrink-0 border-r border-line bg-bg-alt md:block">
