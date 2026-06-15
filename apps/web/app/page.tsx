@@ -82,6 +82,8 @@ function Console() {
   // Mobile shows the session detail (chat) when a session is open or composing new;
   // otherwise the home view (dashboard/sessions/settings tabs). Desktop ignores this.
   const mobileDetail = !!selectedId || composeNew;
+  // Bell badge: sessions that urgently need the user (awaiting answer / errored).
+  const attentionCount = sessions.filter((s) => s.attention === "question" || s.attention === "error").length;
   const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
   const [takeoverArmed, setTakeoverArmed] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
@@ -269,13 +271,21 @@ function Console() {
       {!mobileDetail && (
         <div className="flex min-h-0 flex-1 flex-col md:hidden">
           <HomeHeader
-            title={mobileTab === "dashboard" ? "监控台" : mobileTab === "sessions" ? "Sessions" : "Settings"}
+            title={mobileTab === "dashboard" ? "Claude Console" : mobileTab === "sessions" ? "Sessions" : "Settings"}
             wsConnected={wsConnected}
+            attentionCount={attentionCount}
+            onBell={() => setMobileTab("dashboard")}
             onRefresh={() => void loadSessions()}
           />
           <div className="min-h-0 flex-1">
             {mobileTab === "dashboard" && (
-              <Dashboard sessions={sessions} onOpen={selectAndClose} onShowAll={() => setMobileTab("sessions")} />
+              <Dashboard
+                sessions={sessions}
+                projects={projects}
+                onOpen={selectAndClose}
+                onSwitchProject={(dir) => void switchProject(dir)}
+                onShowAll={() => setMobileTab("sessions")}
+              />
             )}
             {mobileTab === "sessions" && (
               <div className="flex h-full flex-col">
@@ -502,30 +512,53 @@ function Console() {
   );
 }
 
-// Shared mobile home header — usage 余量 + connection dot + refresh, on every tab.
+// Shared mobile home header — logo + title + connection dot, with usage 余量,
+// a notification bell (badge = needs-attention count), and a refresh button.
 function HomeHeader({
   title,
   wsConnected,
+  attentionCount,
+  onBell,
   onRefresh,
 }: {
   title: string;
   wsConnected: boolean;
+  attentionCount: number;
+  onBell: () => void;
   onRefresh: () => void;
 }) {
   return (
-    <header className="flex shrink-0 items-center gap-2 border-b border-line bg-bg-alt px-3 py-2 pt-safe">
-      <ClaudeLogo size={18} className="text-[#D97757]" />
-      <span className="text-sm font-semibold text-ink">{title}</span>
-      <div className="ml-auto flex items-center gap-2">
+    <header className="flex shrink-0 items-center gap-2 border-b border-line bg-bg-alt px-3 py-2.5 pt-safe">
+      <ClaudeLogo size={22} className="text-[#D97757]" />
+      <span className="text-[17px] font-semibold text-ink">{title}</span>
+      <ConnDot ok={wsConnected} />
+      <div className="ml-auto flex items-center gap-1.5">
         <UsageDisplay />
-        <ConnDot ok={wsConnected} />
+        <button
+          onClick={onBell}
+          aria-label="需要处理的会话"
+          className="relative flex h-9 w-9 items-center justify-center rounded-xl border border-line text-ink-dim transition-colors hover:bg-bg-raised hover:text-ink"
+        >
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+            <path d="M13.7 21a2 2 0 0 1-3.4 0" />
+          </svg>
+          {attentionCount > 0 && (
+            <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-accent px-1 text-[10px] font-semibold text-white">
+              {attentionCount > 9 ? "9+" : attentionCount}
+            </span>
+          )}
+        </button>
         <button
           onClick={onRefresh}
           aria-label="刷新"
           title="刷新"
-          className="flex h-8 w-8 items-center justify-center rounded-md border border-line text-base transition-colors hover:bg-bg-raised"
+          className="flex h-9 w-9 items-center justify-center rounded-xl border border-line text-ink-dim transition-colors hover:bg-bg-raised hover:text-ink"
         >
-          ⟳
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+            <polyline points="21 3 21 9 15 9" />
+          </svg>
         </button>
       </div>
     </header>
