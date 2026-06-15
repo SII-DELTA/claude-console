@@ -78,6 +78,14 @@ export const ClaudeSessionSchema = z.object({
   /** 该 live 是由本 agent 的 driver 进程驱动的（而非终端等外部）。 */
   drivenByAgent: z.boolean().optional(),
   preview: z.string().optional(),
+  /**
+   * 该会话是否需要用户关注（供监控台跨会话聚合，无需点进会话即可判断）：
+   * - question: 末尾 assistant turn 含未应答的 AskUserQuestion
+   * - error:    最近一次回合以错误结束
+   * - done:     非 live 且最后回合已完成（跑完待续写）
+   * 缺省表示无需关注。
+   */
+  attention: z.enum(["question", "error", "done"]).optional(),
 });
 export type ClaudeSession = z.infer<typeof ClaudeSessionSchema>;
 

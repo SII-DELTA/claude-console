@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ClaudeStore } from "../claude-store.js";
 import { Bus } from "../bus.js";
-import { encodeProjectDir, parseLine } from "../util/claude-jsonl.js";
+import { accumulate, deriveAttention, encodeProjectDir, newAccumulator, parseLine } from "../util/claude-jsonl.js";
 import type { ClaudeMessage } from "@mac/shared";
 
 const SESSION_ID = "11111111-2222-3333-4444-555555555555";
@@ -80,6 +80,54 @@ describe("claude-jsonl parser", () => {
   it("returns null for non-json", () => {
     expect(parseLine("not json")).toBeNull();
     expect(parseLine("")).toBeNull();
+  });
+});
+
+describe("deriveAttention", () => {
+  function fold(lines: string[]) {
+    const acc = newAccumulator();
+    for (const l of lines) {
+      const p = parseLine(l);
+      if (p) accumulate(acc, p, false);
+    }
+    return acc;
+  }
+  let n = 0;
+  const uid = () => `m${++n}`;
+  const userMsg = (text: string) =>
+    line({ type: "user", uuid: uid(), sessionId: "s", message: { role: "user", content: [{ type: "text", text }] } });
+  const askMsg = (id: string) =>
+    line({
+      type: "assistant",
+      uuid: uid(),
+      sessionId: "s",
+      message: { role: "assistant", content: [{ type: "tool_use", id, name: "AskUserQuestion", input: {} }] },
+    });
+  const answerMsg = (id: string) =>
+    line({
+      type: "user",
+      uuid: uid(),
+      sessionId: "s",
+      message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: "ok" }] },
+    });
+  const textReply = (text: string) =>
+    line({ type: "assistant", uuid: uid(), sessionId: "s", message: { role: "assistant", content: [{ type: "text", text }] } });
+
+  it("flags an unanswered AskUserQuestion as 'question' (even when live)", () => {
+    const acc = fold([userMsg("hi"), askMsg("q1")]);
+    expect(deriveAttention(acc, false)).toBe("question");
+    expect(deriveAttention(acc, true)).toBe("question");
+  });
+
+  it("clears the question once a non-error tool_result answers it", () => {
+    const acc = fold([userMsg("hi"), askMsg("q1"), answerMsg("q1"), textReply("done")]);
+    expect(deriveAttention(acc, false)).toBe("done");
+  });
+
+  it("flags a finished, non-live conversation as 'done'", () => {
+    const acc = fold([userMsg("hi"), textReply("here you go")]);
+    expect(deriveAttention(acc, false)).toBe("done");
+    expect(deriveAttention(acc, true)).toBeUndefined();
   });
 });
 

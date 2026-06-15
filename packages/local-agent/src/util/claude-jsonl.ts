@@ -168,6 +168,10 @@ export interface SessionAccumulator {
   toolUseCount: number;
   lastTimestamp?: string;
   messages: ClaudeMessage[];
+  /** role of the last seen message — used to tell "done/awaiting user" apart */
+  lastRole?: "user" | "assistant";
+  /** AskUserQuestion tool_use ids not yet answered by a non-error tool_result */
+  openQuestionIds: Set<string>;
 }
 
 export function newAccumulator(): SessionAccumulator {
@@ -177,6 +181,7 @@ export function newAccumulator(): SessionAccumulator {
     assistantMessageCount: 0,
     toolUseCount: 0,
     messages: [],
+    openQuestionIds: new Set<string>(),
   };
 }
 
@@ -201,8 +206,34 @@ export function accumulate(acc: SessionAccumulator, parsed: ParsedLine, keepMess
   } else if (m.role === "assistant") {
     acc.assistantMessageCount += 1;
   }
+  if (m.role === "user" || m.role === "assistant") acc.lastRole = m.role;
   acc.toolUseCount += m.blocks.filter((b) => b.kind === "tool_use").length;
+  // Track unanswered AskUserQuestion across the conversation: open on the
+  // tool_use, close when a non-error tool_result with the same id arrives.
+  for (const b of m.blocks) {
+    if (b.kind === "tool_use" && b.toolName === "AskUserQuestion" && b.toolUseId) {
+      acc.openQuestionIds.add(b.toolUseId);
+    } else if (b.kind === "tool_result" && !b.isError && b.toolUseId) {
+      acc.openQuestionIds.delete(b.toolUseId);
+    }
+  }
   if (keepMessages) acc.messages.push(m);
+}
+
+/**
+ * Whether a session needs user attention, for the dashboard's cross-session view:
+ * - `question`: an unanswered AskUserQuestion is pending
+ * - `done`: not live and the last turn was the assistant's (awaiting next instruction)
+ * Returns undefined when nothing needs attention. (`error` is surfaced at runtime
+ * by the driver, not derivable from the jsonl alone.)
+ */
+export function deriveAttention(
+  acc: SessionAccumulator,
+  isLive: boolean,
+): "question" | "error" | "done" | undefined {
+  if (acc.openQuestionIds.size > 0) return "question";
+  if (!isLive && acc.lastRole === "assistant") return "done";
+  return undefined;
 }
 
 export function deriveTitle(acc: SessionAccumulator, fallbackId: string): string {

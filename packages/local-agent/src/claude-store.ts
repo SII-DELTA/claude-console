@@ -12,6 +12,7 @@ import {
 import type { Bus } from "./bus.js";
 import {
   accumulate,
+  deriveAttention,
   deriveTitle,
   encodeProjectDir,
   newAccumulator,
@@ -222,6 +223,7 @@ export class ClaudeStore {
       isLive,
       drivenByAgent: this.drivenPredicate?.(id) ?? false,
       preview: acc.firstUserText?.slice(0, 140),
+      attention: deriveAttention(acc, isLive),
     };
   }
 
