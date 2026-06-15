@@ -48,7 +48,6 @@ const ATT = {
     badge: "bg-accent/20 text-accent",
     accent: "border-l-accent",
     tile: "bg-accent/15 text-accent",
-    action: "去回答",
     icon: (s: number) => <svg viewBox="0 0 24 24" width={s} height={s} {...sw}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>,
   },
   error: {
@@ -56,7 +55,6 @@ const ATT = {
     badge: "bg-danger/20 text-danger",
     accent: "border-l-danger",
     tile: "bg-danger/15 text-danger",
-    action: "查看错误",
     icon: (s: number) => <svg viewBox="0 0 24 24" width={s} height={s} {...sw}><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12" y2="17" /></svg>,
   },
   done: {
@@ -64,7 +62,6 @@ const ATT = {
     badge: "bg-warning/20 text-warning",
     accent: "border-l-warning",
     tile: "bg-warning/15 text-warning",
-    action: "继续对话",
     icon: (s: number) => <svg viewBox="0 0 24 24" width={s} height={s} {...sw}><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" /><line x1="4" y1="22" x2="4" y2="15" /></svg>,
   },
 } as const;
