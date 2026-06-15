@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { Timeline, buildTimeline } from "../components/Timeline";
+import { useAppStore } from "../lib/store";
 import type { ClaudeMessage } from "@mac/shared";
 
 function msg(partial: Partial<ClaudeMessage>): ClaudeMessage {
@@ -53,5 +54,30 @@ describe("Timeline", () => {
   it("keeps real user text as its own item", () => {
     const items = buildTimeline([msg({ id: "u", role: "user", blocks: [{ kind: "text", text: "hi" }] })]);
     expect(items).toEqual([{ kind: "user", id: "u", text: "hi" }]);
+  });
+});
+
+describe("Timeline send receipt (方案 B)", () => {
+  afterEach(() => useAppStore.setState({ sendStatus: null }));
+
+  function renderWithStatus(state: "sending" | "delivered" | "read" | "failed") {
+    useAppStore.setState({ sendStatus: { sessionId: "s1", messageId: "u", state } });
+    render(<Timeline messages={[msg({ id: "u", role: "user", blocks: [{ kind: "text", text: "hi" }] })]} />);
+  }
+
+  it("shows 发送中/已送达/已读/失败 under the matching user bubble", () => {
+    renderWithStatus("sending");
+    expect(screen.getByText("发送中…")).toBeInTheDocument();
+  });
+
+  it("shows 已读·处理中 for the read state", () => {
+    renderWithStatus("read");
+    expect(screen.getByText(/已读·处理中/)).toBeInTheDocument();
+  });
+
+  it("shows nothing when the receipt targets a different message", () => {
+    useAppStore.setState({ sendStatus: { sessionId: "s1", messageId: "other", state: "delivered" } });
+    render(<Timeline messages={[msg({ id: "u", role: "user", blocks: [{ kind: "text", text: "hi" }] })]} />);
+    expect(screen.queryByText("已送达 ✓")).not.toBeInTheDocument();
   });
 });

@@ -75,6 +75,9 @@ export interface Connection {
 
 export type DriveStatus = "idle" | "streaming";
 
+/** Delivery/read receipt for the just-sent user message (方案 B). */
+export type SendState = "sending" | "delivered" | "read" | "failed";
+
 /** Active bottom-tab on mobile (desktop keeps the sidebar layout, ignores this). */
 export type MobileTab = "dashboard" | "sessions" | "settings";
 
@@ -119,6 +122,8 @@ interface AppState {
     /** false ⇒ recovered from history (process gone); answering will resume the session. */
     live?: boolean;
   } | null;
+  /** Delivery/read receipt for the last sent user message (方案 B). */
+  sendStatus: { sessionId: string | null; messageId: string; state: SendState } | null;
   error: string | null;
 
   setConnection: (c: Connection | null) => void;
@@ -197,6 +202,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   permissionMode: loadPermissionMode(),
   rateLimit: null,
   pendingPermission: null,
+  sendStatus: null,
   error: null,
 
   setPermissionMode(m) {
@@ -412,8 +418,10 @@ export const useAppStore = create<AppState>((set, get) => ({
           messages: [...get().messages, userMsg],
           driveStatus: "streaming",
           stream: { sessionId: selected, text: "", thinking: "", tools: [] },
+          sendStatus: { sessionId: selected, messageId: userMsg.id, state: "sending" },
         });
         await api.continueClaudeSession(selected, prompt, opts?.force, images, get().permissionMode);
+        markDelivered(set, get, userMsg.id, selected);
       } else {
         // New session: id is unknown until POST returns. Start streaming with a
         // null sessionId; the delta handler adopts the id from the first event.
@@ -421,6 +429,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           messages: [userMsg],
           driveStatus: "streaming",
           stream: { sessionId: null, text: "", thinking: "", tools: [] },
+          sendStatus: { sessionId: null, messageId: userMsg.id, state: "sending" },
         });
         const { sessionId } = await api.newClaudeSession(
           prompt,
@@ -432,22 +441,31 @@ export const useAppStore = create<AppState>((set, get) => ({
           selectedId: sessionId,
           stream: s.stream ? { ...s.stream, sessionId: s.stream.sessionId ?? sessionId } : s.stream,
         }));
+        markDelivered(set, get, userMsg.id, sessionId);
       }
       return true;
     } catch (err) {
-      set({
-        driveStatus: "idle",
-        stream: null,
-        messages: get().messages.filter((m) => m.id !== userMsg.id),
-      });
       if (isLiveConflict(err)) {
+        // drop the optimistic bubble; the takeover dialog re-sends on confirm
+        set({
+          driveStatus: "idle",
+          stream: null,
+          sendStatus: null,
+          messages: get().messages.filter((m) => m.id !== userMsg.id),
+        });
         const e = err as ApiError;
         const msg =
           (e.body as { message?: string } | undefined)?.message ??
           "该会话在终端仍活跃，确认要接管吗？";
         set({ error: `LIVE:${msg}` });
       } else {
-        set({ error: describeError(err) });
+        // keep the bubble and mark it failed (never silently swallow the message)
+        set({
+          driveStatus: "idle",
+          stream: null,
+          sendStatus: { sessionId: selected ?? null, messageId: userMsg.id, state: "failed" },
+          error: describeError(err),
+        });
       }
       return false;
     }
@@ -598,6 +616,7 @@ function handleServerMessage(
           s.id === msg.sessionId ? { ...s, driving: msg.driving } : s,
         ),
       });
+      if (msg.driving) markRead(set, get, msg.sessionId); // agent started → "已读·处理中"
       break;
     }
     case "server:claude_message": {
@@ -620,6 +639,7 @@ function handleServerMessage(
       break;
     }
     case "server:claude_delta": {
+      markRead(set, get, msg.sessionId); // first token of the reply → "已读·处理中"
       const cur = get().stream;
       if (get().driveStatus !== "streaming" || !cur) break;
       // Adopt the id for a freshly-created session (cur.sessionId still null).
@@ -681,13 +701,32 @@ function isStreamSession(st: AppState, sessionId: string): boolean {
   return st.stream?.sessionId === sessionId || st.selectedId === sessionId;
 }
 
+type StoreSet = (partial: Partial<AppState> | ((s: AppState) => Partial<AppState>)) => void;
+
+/** sending → delivered (HTTP accepted), binding the real sessionId for new sessions. */
+function markDelivered(set: StoreSet, get: () => AppState, messageId: string, sessionId: string): void {
+  const ss = get().sendStatus;
+  if (ss?.messageId === messageId && ss.state === "sending") {
+    set({ sendStatus: { sessionId, messageId, state: "delivered" } });
+  }
+}
+
+/** delivered/sending → read (the agent began this turn: first delta or driving=true). */
+function markRead(set: StoreSet, get: () => AppState, sessionId: string): void {
+  const ss = get().sendStatus;
+  if (!ss || ss.state === "read" || ss.state === "failed") return;
+  if (ss.sessionId !== null && ss.sessionId !== sessionId) return;
+  set({ sendStatus: { ...ss, sessionId, state: "read" } });
+}
+
 /** End the active drive: stop streaming and refetch the authoritative tail. */
 async function endTurn(
   set: (partial: Partial<AppState> | ((s: AppState) => Partial<AppState>)) => void,
   get: () => AppState,
   sessionId: string,
 ): Promise<void> {
-  set({ driveStatus: "idle", stream: null });
+  // turn finished → the receipt's job is done; clear it (the reply is now visible)
+  set({ driveStatus: "idle", stream: null, sendStatus: null });
   const api = get().api;
   if (!api || get().selectedId !== sessionId) return;
   try {

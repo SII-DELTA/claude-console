@@ -5,7 +5,7 @@ import type { ClaudeMessage, ClaudeMessageBlock } from "@mac/shared";
 import { Markdown } from "./Markdown";
 import { ImageThumb } from "./ImageThumb";
 import { copyText } from "../lib/clipboard";
-import { useAppStore } from "../lib/store";
+import { useAppStore, type SendState } from "../lib/store";
 
 /**
  * Claude-Code-style conversation timeline. Tool calls are paired with their
@@ -34,17 +34,33 @@ export function Timeline({
   onFillInput?: (text: string) => void;
 }) {
   const groups = groupItems(buildTimeline(messages));
+  const sendStatus = useAppStore((s) => s.sendStatus);
   return (
     <div className="space-y-3">
       {groups.map((g, i) =>
         g.kind === "user" ? (
-          <Row key={g.item.id} item={g.item} onFillInput={onFillInput} />
+          <div key={g.item.id}>
+            <Row item={g.item} onFillInput={onFillInput} />
+            {sendStatus?.messageId === g.item.id && <SendReceipt state={sendStatus.state} />}
+          </div>
         ) : (
           <AssistantGroup key={i} items={g.items} />
         ),
       )}
     </div>
   );
+}
+
+/** Delivery/read receipt shown under the last sent user bubble (方案 B). */
+function SendReceipt({ state }: { state: SendState }) {
+  const map: Record<SendState, { text: string; cls: string }> = {
+    sending: { text: "发送中…", cls: "text-ink-faint" },
+    delivered: { text: "已送达 ✓", cls: "text-ink-faint" },
+    read: { text: "已读·处理中 ✓✓", cls: "text-accent" },
+    failed: { text: "发送失败", cls: "text-danger" },
+  };
+  const { text, cls } = map[state];
+  return <div className={`mt-0.5 pr-1 text-right text-[11px] ${cls}`}>{text}</div>;
 }
 
 /** Small hover-revealed copy button with transient "已复制" feedback. */
