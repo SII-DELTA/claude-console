@@ -131,41 +131,6 @@ function Console() {
   // reset the takeover arm whenever the selected session changes
   useEffect(() => setTakeoverArmed(false), [selectedId]);
 
-  // The app shell is `position: fixed` and sized to the visualViewport (see the root
-  // div + globals.css). This is the only reliable iOS-PWA keyboard fix: in standalone
-  // mode window.innerHeight never changes and the OS scrolls the *layout* viewport to
-  // reveal the focused input — which shoves an in-flow layout up off-screen. By pinning
-  // a fixed shell to visualViewport.height (area above the keyboard) and following its
-  // offsetTop, the composer always sits right above the keyboard and nothing scrolls.
-  useEffect(() => {
-    const root = document.documentElement;
-    const setH = () => {
-      const vv = window.visualViewport;
-      // keyboard open ⇒ visual viewport is much shorter than the layout viewport
-      // (>120px filters out URL-bar shrink). At rest, fill the whole screen with
-      // innerHeight so the bottom bar sits flush — vv.height can under-report the
-      // screen height in standalone PWA and leave a gap below the tab bar.
-      const kbOpen = vv ? window.innerHeight - vv.height > 120 : false;
-      const h = kbOpen && vv ? vv.height : window.innerHeight;
-      root.style.setProperty("--app-height", `${h}px`);
-      root.style.setProperty("--vv-top", `${kbOpen && vv ? vv.offsetTop : 0}px`);
-      // keyboard open ⇒ home indicator hidden ⇒ drop the safe-area gap below the composer
-      root.classList.toggle("kb-open", kbOpen);
-    };
-    setH();
-    window.addEventListener("resize", setH);
-    window.addEventListener("orientationchange", setH);
-    window.visualViewport?.addEventListener("resize", setH);
-    window.visualViewport?.addEventListener("scroll", setH);
-    return () => {
-      window.removeEventListener("resize", setH);
-      window.removeEventListener("orientationchange", setH);
-      window.visualViewport?.removeEventListener("resize", setH);
-      window.visualViewport?.removeEventListener("scroll", setH);
-      root.classList.remove("kb-open");
-    };
-  }, []);
-
   // connect the WS on mount when restoring a persisted connection
   useEffect(() => {
     if (!ws) connectWs();
@@ -267,7 +232,7 @@ function Console() {
   }
 
   return (
-    <div className="app-shell flex overflow-hidden bg-bg text-ink flex-col md:flex-row">
+    <div className="flex h-[100dvh] overflow-hidden bg-bg text-ink flex-col md:flex-row">
       {/* Sidebar (desktop) / Drawer (mobile) */}
       <aside className="hidden w-72 shrink-0 border-r border-line bg-bg-alt md:block">
         <Brand
@@ -296,7 +261,6 @@ function Console() {
             wsConnected={wsConnected}
             attentionCount={attentionCount}
             onBell={() => setMobileTab("dashboard")}
-            onRefresh={() => Promise.all([loadSessions(), loadProjects()])}
           />
           <div className="min-h-0 flex-1">
             {mobileTab === "dashboard" && (
@@ -357,12 +321,12 @@ function Console() {
               <polyline points="15 18 9 12 15 6" />
             </svg>
           </button>
-          <span className="truncate text-sm font-medium" style={{ maxWidth: "calc(100% - 150px)" }}>{selected?.title ?? "新会话"}</span>
-          {selected?.isLive && <ConnDot ok={wsConnected} />}
-          <div className="flex shrink-0 items-center gap-1.5 whitespace-nowrap ml-auto">
+          <span className="min-w-0 flex-1 truncate text-sm font-medium">{selected?.title ?? "新会话"}</span>
+          <div className="ml-auto flex shrink-0 items-center gap-1.5">
             <UsageDisplay />
+            <ConnDot ok={wsConnected} />
+            <RefreshButton />
           </div>
-          <DetailMenu sessionId={selectedId} onDisconnect={() => setConnection(null)} />
         </header>
 
         {/* Desktop header */}
@@ -550,39 +514,26 @@ function Console() {
   );
 }
 
-// Shared mobile home header — logo + title + connection dot, with usage 余量,
-// a notification bell (badge = needs-attention count), and a refresh button.
+// Shared mobile home header — logo + title, then a unified right cluster:
+// usage 余量 → connection dot → notification bell (badge) → refresh.
 function HomeHeader({
   title,
   wsConnected,
   attentionCount,
   onBell,
-  onRefresh,
 }: {
   title: string;
   wsConnected: boolean;
   attentionCount: number;
   onBell: () => void;
-  onRefresh: () => void | Promise<unknown>;
 }) {
-  const [refreshing, setRefreshing] = useState(false);
-  async function doRefresh() {
-    if (refreshing) return;
-    setRefreshing(true);
-    try {
-      await onRefresh();
-    } finally {
-      // keep the spin visible long enough to read as a deliberate refresh
-      setTimeout(() => setRefreshing(false), 500);
-    }
-  }
   return (
     <header className="flex shrink-0 items-center gap-2 border-b border-line bg-bg-alt px-3 py-2.5 pt-safe">
       <ClaudeLogo size={22} className="text-[#D97757]" />
       <span className="text-[17px] font-semibold text-ink">{title}</span>
-      <ConnDot ok={wsConnected} />
       <div className="ml-auto flex items-center gap-1.5">
         <UsageDisplay />
+        <ConnDot ok={wsConnected} />
         <button
           onClick={onBell}
           aria-label="需要处理的会话"
@@ -598,20 +549,27 @@ function HomeHeader({
             </span>
           )}
         </button>
-        <button
-          onClick={() => void doRefresh()}
-          disabled={refreshing}
-          aria-label="刷新"
-          title="刷新"
-          className="flex h-9 w-9 items-center justify-center rounded-xl border border-line text-ink-dim transition-colors hover:bg-bg-raised hover:text-ink disabled:opacity-60"
-        >
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={refreshing ? "animate-spin" : ""}>
-            <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-            <polyline points="21 3 21 9 15 9" />
-          </svg>
-        </button>
+        <RefreshButton />
       </div>
     </header>
+  );
+}
+
+// Full page reload — matches what users expect from a refresh icon (the
+// session list also auto-polls every 20s in the background).
+function RefreshButton() {
+  return (
+    <button
+      onClick={() => window.location.reload()}
+      aria-label="刷新"
+      title="刷新整个页面"
+      className="flex h-9 w-9 items-center justify-center rounded-xl border border-line text-ink-dim transition-colors hover:bg-bg-raised hover:text-ink active:rotate-180 active:duration-300"
+    >
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+        <polyline points="21 3 21 9 15 9" />
+      </svg>
+    </button>
   );
 }
 
@@ -936,77 +894,6 @@ function Badge({ children, tone = "ok" }: { children: React.ReactNode; tone?: "o
       : "bg-success/20 text-success";
   return (
     <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${cls}`}>{children}</span>
-  );
-}
-
-function DetailMenu({ sessionId, onDisconnect }: { sessionId: string | null; onDisconnect: () => void }) {
-  const [open, setOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
-  async function copyId() {
-    if (!sessionId) return;
-    try {
-      await navigator.clipboard.writeText(sessionId);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
-    } catch {
-      /* clipboard blocked (insecure context) — ignore */
-    }
-  }
-  return (
-    <div className="relative shrink-0">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-bg-raised transition-colors text-lg leading-none"
-        aria-label="更多"
-      >
-        ⋯
-      </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-full z-30 mt-1 w-40 overflow-hidden rounded-xl border border-line bg-bg-raised p-1 shadow-2xl">
-            <MenuItem
-              label={copied ? "已复制 ✓" : "复制会话 ID"}
-              disabled={!sessionId}
-              onClick={() => void copyId()}
-            />
-            <MenuItem label="刷新页面" onClick={() => window.location.reload()} />
-            <MenuItem
-              label="断开连接"
-              danger
-              onClick={() => {
-                setOpen(false);
-                onDisconnect();
-              }}
-            />
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-function MenuItem({
-  label,
-  onClick,
-  danger,
-  disabled,
-}: {
-  label: string;
-  onClick: () => void;
-  danger?: boolean;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      className={`block w-full rounded-lg px-3 py-2 text-left text-[13px] hover:bg-bg-alt disabled:opacity-40 ${
-        danger ? "text-danger" : "text-ink"
-      }`}
-    >
-      {label}
-    </button>
   );
 }
 

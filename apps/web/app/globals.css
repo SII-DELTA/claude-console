@@ -9,15 +9,11 @@
 html,
 body {
   height: 100%;
-  /* The app shell is `position: fixed` (see page.tsx root). Lock document scroll so
-     iOS never scrolls the layout viewport on input focus — the #1 cause of the
-     composer being shoved up off-screen when the keyboard opens. NOT position:fixed
-     on body itself (that broke the bottom tab bar / bled content through on iOS). */
-  overflow: hidden;
 }
 
 body {
   @apply bg-bg text-ink;
+  min-height: 100dvh;
   -webkit-font-smoothing: antialiased;
   overscroll-behavior: none;
   touch-action: manipulation;
@@ -64,28 +60,9 @@ body {
   }
 }
 
-/* App shell positioning. At rest: `inset: 0` fills the viewport edge-to-edge — the
-   browser defines the true bottom, so there's never a gap below the tab bar regardless
-   of how innerHeight/visualViewport report on a given device. Only when the keyboard is
-   open do we pin the top to the visual viewport and use an explicit height so the bottom
-   lifts above the keyboard (iOS overlays the keyboard; this keeps the composer visible). */
-.app-shell {
-  position: fixed;
-  inset: 0;
-}
-.kb-open .app-shell {
-  top: var(--vv-top, 0px);
-  bottom: auto;
-  height: var(--app-height, 100dvh);
-}
-
 /* safe-area padding for mobile (notch / home indicator) */
 .pb-safe {
   padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
-}
-/* keyboard open ⇒ home indicator hidden ⇒ drop the safe-area gap below the composer */
-.kb-open .pb-safe {
-  padding-bottom: 0.5rem;
 }
 .pt-safe {
   padding-top: max(0.5rem, env(safe-area-inset-top));
