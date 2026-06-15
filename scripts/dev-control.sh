@@ -3,8 +3,14 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOG_DIR="$ROOT_DIR/.logs"
-WEB_PORT="${WEB_PORT:-3005}"
-AGENT_PORT="${AGENT_PORT:-7345}"
+
+# Read a numeric key from the root .env (if present). Explicit environment wins,
+# then .env, then the built-in default.
+_envfile="$ROOT_DIR/.env"
+_port_from_env() { [[ -f "$_envfile" ]] && grep -E "^$1=" "$_envfile" 2>/dev/null | tail -1 | cut -d= -f2- | tr -dc '0-9'; true; }
+
+WEB_PORT="${WEB_PORT:-$(_port_from_env WEB_PORT)}"; WEB_PORT="${WEB_PORT:-3005}"
+AGENT_PORT="${AGENT_PORT:-$(_port_from_env AGENT_PORT)}"; AGENT_PORT="${AGENT_PORT:-7345}"
 # WEB_MODE: prod = next build + next start（正式）；dev = next dev（本地调试）
 WEB_MODE="${WEB_MODE:-prod}"
 WEB_LABEL="com.nexra.agent-console.web"
