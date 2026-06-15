@@ -31,3 +31,11 @@
 - `pnpm --filter @mac/web test` 18 全绿。
 - `pnpm --filter @mac/web build` 成功。
 - 设备端键盘/底部 Tab 表现需在真机复测确认。
+
+## 修正（同日，commit 5394348）
+真机反馈：上一版的 `body { position: fixed; inset: 0 }` + `html/body overflow:hidden` +
+根容器 `transform: translateY(--vv-offset)` 组合导致**底部 Tab 栏与会话内容相互穿透**
+（看起来变"透明"）。回归到已验证可用的几何：
+- `body` 恢复普通流（`min-height:100dvh`，无 `position:fixed`）；`html/body` 去掉 `overflow:hidden`；根容器去掉 `transform`。
+- `--app-height` 静止态改回 `window.innerHeight`（底部贴合屏幕底已验证），**仅当软键盘真正弹出**（`innerHeight - visualViewport.height > 120`）才钳到 `visualViewport.height`，保证 composer 在键盘上方而不改变静止态布局。
+- 保留 `interactiveWidget=resizes-content`（Android 键盘）与 `.kb-open`（去除 composer 下方 safe-area 空隙）。
