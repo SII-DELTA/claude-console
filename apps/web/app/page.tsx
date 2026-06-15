@@ -12,6 +12,9 @@ import { ClaudeLogo } from "../components/ClaudeLogo";
 import { QuestionPanel, findPendingQuestions } from "../components/QuestionPanel";
 import { UsageDisplay } from "../components/UsageDisplay";
 import { LoadingBadge } from "../components/LoadingBadge";
+import { BottomTabs } from "../components/BottomTabs";
+import { Dashboard } from "../components/Dashboard";
+import { SettingsPage } from "../components/SettingsPage";
 import { notify } from "../lib/notify";
 
 export default function Page() {
@@ -60,6 +63,8 @@ function Console() {
     wsConnected,
     error,
     loadingDetail,
+    mobileTab,
+    setMobileTab,
     selectSession,
     sendPrompt,
     interrupt,
@@ -72,7 +77,11 @@ function Console() {
     ws,
   } = useAppStore();
 
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  // Mobile: a "new session" detail view opened with no session selected yet.
+  const [composeNew, setComposeNew] = useState(false);
+  // Mobile shows the session detail (chat) when a session is open or composing new;
+  // otherwise the home view (dashboard/sessions/settings tabs). Desktop ignores this.
+  const mobileDetail = !!selectedId || composeNew;
   const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
   const [takeoverArmed, setTakeoverArmed] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
@@ -193,22 +202,25 @@ function Console() {
       const answers: Record<string, string | string[]> = {};
       for (const q of bPermission.questions) answers[q.question] = q.multiSelect ? [text] : text;
       void answerPermission(answers);
-      setDrawerOpen(false);
       return;
     }
     // when armed (or taking over external-live), force the resume
     void sendPrompt(text, { force: externalLive || undefined, images });
-    setDrawerOpen(false);
   }
 
   function selectAndClose(id: string) {
     void selectSession(id);
-    setDrawerOpen(false);
   }
 
   function startNew() {
     void selectSession(null);
-    setDrawerOpen(false);
+    setComposeNew(true); // mobile: open the new-session detail view
+  }
+
+  // Mobile: back from the session detail returns to the home tabs.
+  function goBack() {
+    void selectSession(null);
+    setComposeNew(false);
   }
 
   return (
@@ -233,53 +245,69 @@ function Console() {
         </div>
       </aside>
 
-      {drawerOpen && (
-        <div className="fixed inset-0 z-30 md:hidden">
-          <div className="absolute inset-0 bg-black/50" onClick={() => setDrawerOpen(false)} />
-          <div className="absolute left-0 top-0 h-full w-72 border-r border-line bg-bg-alt">
-            <Brand
-              projects={projects}
-              activeProjectDir={activeProjectDir}
-              fallbackName={connection?.workspaceName}
-              wsConnected={wsConnected}
-              onSwitch={(dir) => void switchProject(dir)}
-            />
-            <div className="h-[calc(100%-4.5rem)]">
-              <SessionList
-                sessions={sessions}
-                selectedId={selectedId}
-                onSelect={selectAndClose}
-                onNew={startNew}
-                onRefresh={loadSessions}
+      {/* Mobile home: bottom-tab views (dashboard / sessions / settings) */}
+      {!mobileDetail && (
+        <div className="flex min-h-0 flex-1 flex-col md:hidden">
+          <div className="min-h-0 flex-1">
+            {mobileTab === "dashboard" && (
+              <Dashboard sessions={sessions} onOpen={selectAndClose} onShowAll={() => setMobileTab("sessions")} />
+            )}
+            {mobileTab === "sessions" && (
+              <div className="flex h-full flex-col">
+                <Brand
+                  projects={projects}
+                  activeProjectDir={activeProjectDir}
+                  fallbackName={connection?.workspaceName}
+                  wsConnected={wsConnected}
+                  onSwitch={(dir) => void switchProject(dir)}
+                />
+                <div className="min-h-0 flex-1">
+                  <SessionList
+                    sessions={sessions}
+                    selectedId={selectedId}
+                    onSelect={selectAndClose}
+                    onNew={startNew}
+                    onRefresh={loadSessions}
+                  />
+                </div>
+              </div>
+            )}
+            {mobileTab === "settings" && (
+              <SettingsPage
+                serverUrl={connection?.url}
+                workspaceName={connection?.workspaceName}
+                wsConnected={wsConnected}
+                permissionMode={permissionMode}
+                onPermissionChange={setPermissionMode}
+                onDisconnect={() => setConnection(null)}
               />
-            </div>
+            )}
           </div>
+          <BottomTabs active={mobileTab} onChange={setMobileTab} />
         </div>
       )}
 
-      {/* Main chat column */}
-      <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+      {/* Main chat column — desktop always; mobile only in detail view */}
+      <main
+        className={`min-h-0 min-w-0 flex-1 flex-col md:flex ${mobileDetail ? "flex" : "hidden"}`}
+      >
         {/* Mobile header */}
-        <header className="flex shrink-0 items-center gap-2 border-b border-line bg-bg-alt px-3 py-2 pt-safe md:hidden">
+        <header className="flex shrink-0 items-center gap-2 border-b border-line bg-bg-alt px-2 py-2 pt-safe md:hidden">
           <button
-            onClick={() => setDrawerOpen(true)}
-            className="btn-ghost !px-2.5 !py-1.5"
-            aria-label="会话列表"
+            onClick={goBack}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-bg-raised transition-colors"
+            aria-label="返回"
           >
-            ☰
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <polyline points="15 18 9 12 15 6" />
+            </svg>
           </button>
-          <span className="truncate text-sm font-medium" style={{ maxWidth: "calc(100% - 140px)" }}>{selected?.title ?? "新会话"}</span>
+          <span className="truncate text-sm font-medium" style={{ maxWidth: "calc(100% - 150px)" }}>{selected?.title ?? "新会话"}</span>
+          {selected?.isLive && <ConnDot ok={wsConnected} />}
           <div className="flex shrink-0 items-center gap-1.5 whitespace-nowrap ml-auto">
             <UsageDisplay />
-            <ConnDot ok={wsConnected} />
           </div>
-          <button
-            onClick={() => window.location.reload()}
-            className="h-8 w-8 flex shrink-0 items-center justify-center rounded-md border border-line hover:bg-bg-raised transition-colors text-base"
-            title="刷新页面"
-          >
-            ⟳
-          </button>
+          <DetailMenu sessionId={selectedId} onDisconnect={() => setConnection(null)} />
         </header>
 
         {/* Desktop header */}
@@ -748,6 +776,77 @@ function Badge({ children, tone = "ok" }: { children: React.ReactNode; tone?: "o
       : "bg-success/20 text-success";
   return (
     <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${cls}`}>{children}</span>
+  );
+}
+
+function DetailMenu({ sessionId, onDisconnect }: { sessionId: string | null; onDisconnect: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  async function copyId() {
+    if (!sessionId) return;
+    try {
+      await navigator.clipboard.writeText(sessionId);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      /* clipboard blocked (insecure context) — ignore */
+    }
+  }
+  return (
+    <div className="relative shrink-0">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-bg-raised transition-colors text-lg leading-none"
+        aria-label="更多"
+      >
+        ⋯
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-full z-30 mt-1 w-40 overflow-hidden rounded-xl border border-line bg-bg-raised p-1 shadow-2xl">
+            <MenuItem
+              label={copied ? "已复制 ✓" : "复制会话 ID"}
+              disabled={!sessionId}
+              onClick={() => void copyId()}
+            />
+            <MenuItem label="刷新页面" onClick={() => window.location.reload()} />
+            <MenuItem
+              label="断开连接"
+              danger
+              onClick={() => {
+                setOpen(false);
+                onDisconnect();
+              }}
+            />
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function MenuItem({
+  label,
+  onClick,
+  danger,
+  disabled,
+}: {
+  label: string;
+  onClick: () => void;
+  danger?: boolean;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`block w-full rounded-lg px-3 py-2 text-left text-[13px] hover:bg-bg-alt disabled:opacity-40 ${
+        danger ? "text-danger" : "text-ink"
+      }`}
+    >
+      {label}
+    </button>
   );
 }
 

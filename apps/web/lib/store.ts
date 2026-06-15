@@ -37,8 +37,10 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 /** debounce so we only pre-warm a session you actually dwell on */
 let prewarmTimer: ReturnType<typeof setTimeout> | null = null;
 
-/** messages per page (initial tail + each "load earlier" step) */
+/** messages fetched on each "load earlier" step */
 const HISTORY_PAGE = 40;
+/** messages rendered on first opening a session (configurable via env, default 10) */
+const INITIAL_MESSAGES = Number(process.env.NEXT_PUBLIC_INITIAL_MESSAGES) || 10;
 /** how many recently-viewed sessions to keep rendered in memory */
 const SESSION_CACHE_MAX = 5;
 /** in-memory cache of recently viewed sessions → instant switch-back (no refetch/re-render churn) */
@@ -73,6 +75,9 @@ export interface Connection {
 
 export type DriveStatus = "idle" | "streaming";
 
+/** Active bottom-tab on mobile (desktop keeps the sidebar layout, ignores this). */
+export type MobileTab = "dashboard" | "sessions" | "settings";
+
 /** Live streaming buffer for the session currently being driven. */
 export interface StreamBuffer {
   /** null until a new session's id is known (set once POST returns / first delta). */
@@ -92,6 +97,8 @@ interface AppState {
   activeProjectDir: string | null;
   sessions: ClaudeSession[];
   selectedId: string | null;
+  /** which bottom tab is active on mobile (home view when no session is open) */
+  mobileTab: MobileTab;
   messages: ClaudeMessage[];
   /** start index of the loaded slice within the full history; >0 means older messages exist */
   historyOffset: number;
@@ -113,6 +120,7 @@ interface AppState {
   error: string | null;
 
   setConnection: (c: Connection | null) => void;
+  setMobileTab: (t: MobileTab) => void;
   setPermissionMode: (m: ClaudePermissionMode) => void;
   connectWs: () => void;
   loadProjects: () => Promise<void>;
@@ -169,6 +177,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   activeProjectDir: null,
   sessions: [],
   selectedId: null,
+  mobileTab: "dashboard",
   messages: [],
   historyOffset: 0,
   loadingEarlier: false,
@@ -184,6 +193,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   setPermissionMode(m) {
     if (typeof window !== "undefined") window.localStorage.setItem(PERM_KEY, m);
     set({ permissionMode: m });
+  },
+
+  setMobileTab(t) {
+    set({ mobileTab: t });
   },
 
   setConnection(c) {
@@ -324,7 +337,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     set({ messages: [], historyOffset: 0, loadingEarlier: false, loadingDetail: true });
     try {
-      const res = await api.claudeSession(id, { limit: HISTORY_PAGE });
+      const res = await api.claudeSession(id, { limit: INITIAL_MESSAGES });
       // guard against a race where the user switched away mid-fetch
       if (get().selectedId === id) {
         cacheSet(id, res.messages, res.offset);

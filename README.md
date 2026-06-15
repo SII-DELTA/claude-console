@@ -97,6 +97,7 @@ tailscale serve status                              # 查看；tailscale serve r
 | `WEB_PORT` | `3005` | Web 端口。 |
 | `AGENT_PORT` | `7345` | Agent 端口。 |
 | `AGENT_HTTPS_PORT` | `8443` | `*.ts.net` 下前端自动连接的 agent HTTPS 端口（构建期注入，需与 serve 的 `--https=` 一致）。 |
+| `INITIAL_MESSAGES` | `10` | 打开会话时首屏渲染的消息条数（「加载更早」每页仍 40，构建期注入）。 |
 | `CLAUDE_PERMISSION_MODE` | `default` | headless 权限模式：`default`/`auto`/`acceptEdits`/`bypassPermissions`/`plan`。 |
 | `VOICE_SECRET_ID` / `VOICE_SECRET_KEY` | — | 腾讯云 ASR 凭据（语音输入，见[语音识别](#语音识别asr)）。 |
 | `VOICE_REGION` | `ap-guangzhou` | 腾讯云 ASR 区域。 |
