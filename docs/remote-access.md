@@ -77,7 +77,8 @@ tailscale serve status                              # 查看；tailscale serve r
 无需手动输入。两端都是 HTTPS，WS 自动走 `wss://…:8443/ws`，无混合内容、无跨域（agent 默认 `CORS=*`）。
 
 > 自动识别逻辑在 `apps/web/components/ConnectForm.tsx` 的 `defaultAgentUrl()`：
-> `https://*.ts.net` → `https://<同主机>:8443`。若 serve 用了别的端口或同源 `/agent`，手动改地址即可。
+> `https://*.ts.net` → `https://<同主机>:8443`。端口可在根 `.env` 设 `AGENT_HTTPS_PORT`
+> 调整（与 agent 的 `--https=` 保持一致，构建期注入）；同源 `/agent` 方案则手动改地址。
 
 > **更简洁的备选（同源）**：把 agent 挂到同一域名的 `/agent` 路径，正好匹配前端内置的
 > `<origin>/agent` 默认值（连服务器地址都不用填）：

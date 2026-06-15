@@ -6,7 +6,8 @@ import { useAppStore } from "../lib/store";
 import { ClaudeLogo } from "./ClaudeLogo";
 
 // Agent's HTTPS port when fronted by `tailscale serve --https=8443 localhost:7345`.
-const TS_AGENT_HTTPS_PORT = "8443";
+// Configurable via root .env AGENT_HTTPS_PORT (baked at build by dev-control.sh).
+const TS_AGENT_HTTPS_PORT = process.env.NEXT_PUBLIC_AGENT_HTTPS_PORT || "8443";
 
 /**
  * Guess the agent address from how the page is being served:

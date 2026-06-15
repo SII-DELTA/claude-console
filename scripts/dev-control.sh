@@ -11,6 +11,10 @@ _port_from_env() { [[ -f "$_envfile" ]] && grep -E "^$1=" "$_envfile" 2>/dev/nul
 
 WEB_PORT="${WEB_PORT:-$(_port_from_env WEB_PORT)}"; WEB_PORT="${WEB_PORT:-3005}"
 AGENT_PORT="${AGENT_PORT:-$(_port_from_env AGENT_PORT)}"; AGENT_PORT="${AGENT_PORT:-7345}"
+# Agent's HTTPS port behind `tailscale serve`; baked into the web build so the
+# client auto-fills it on *.ts.net (see apps/web ConnectForm defaultAgentUrl).
+AGENT_HTTPS_PORT="${AGENT_HTTPS_PORT:-$(_port_from_env AGENT_HTTPS_PORT)}"; AGENT_HTTPS_PORT="${AGENT_HTTPS_PORT:-8443}"
+export NEXT_PUBLIC_AGENT_HTTPS_PORT="$AGENT_HTTPS_PORT"
 # WEB_MODE: prod = next build + next start（正式）；dev = next dev（本地调试）
 WEB_MODE="${WEB_MODE:-prod}"
 WEB_LABEL="com.nexra.agent-console.web"
@@ -63,7 +67,7 @@ start_web() {
 start_web_dev() {
   echo "[dev-control] starting web (dev / next dev) on :$WEB_PORT"
   rm -rf "$ROOT_DIR/apps/web/.next-dev"
-  run_detached "$WEB_LABEL" "$WEB_SCREEN" "$ROOT_DIR/apps/web" "$LOG_DIR/web.log" "env NEXT_DIST_DIR=.next-dev ./node_modules/.bin/next dev -p $WEB_PORT"
+  run_detached "$WEB_LABEL" "$WEB_SCREEN" "$ROOT_DIR/apps/web" "$LOG_DIR/web.log" "env NEXT_DIST_DIR=.next-dev NEXT_PUBLIC_AGENT_HTTPS_PORT=$AGENT_HTTPS_PORT ./node_modules/.bin/next dev -p $WEB_PORT"
   wait_for_http "http://127.0.0.1:$WEB_PORT/" "web" "$LOG_DIR/web.log"
 }
 
@@ -75,7 +79,7 @@ start_web_prod() {
   )
   (
     cd "$ROOT_DIR/apps/web"
-    env NEXT_DIST_DIR=.next ./node_modules/.bin/next build 2>&1 | tee "$LOG_DIR/web-build.log"
+    env NEXT_DIST_DIR=.next NEXT_PUBLIC_AGENT_HTTPS_PORT="$AGENT_HTTPS_PORT" ./node_modules/.bin/next build 2>&1 | tee "$LOG_DIR/web-build.log"
   )
   echo "[dev-control] starting web (prod / next start) on :$WEB_PORT"
   run_detached "$WEB_LABEL" "$WEB_SCREEN" "$ROOT_DIR/apps/web" "$LOG_DIR/web.log" "env NEXT_DIST_DIR=.next ./node_modules/.bin/next start -p $WEB_PORT"
