@@ -130,33 +130,33 @@ function Console() {
   // reset the takeover arm whenever the selected session changes
   useEffect(() => setTakeoverArmed(false), [selectedId]);
 
-  // Pin layout to the real visible height. `dvh`/`innerHeight` both lag the dynamic
-  // toolbar and don't account for the soft keyboard, so drive height + top offset
-  // off the visualViewport: its height is the area not covered by the keyboard, and
-  // its offsetTop is how far the page is shifted (iOS keyboard overlay). The root
-  // container follows both so the composer always sits right above the keyboard.
+  // Pin layout to the real visible height. At rest we use window.innerHeight (the
+  // proven-good geometry — bottom tab bar sits flush at the screen bottom). Only when
+  // the soft keyboard is actually open do we clamp to visualViewport.height so the
+  // composer stays above the keyboard:
+  //   • Android: `interactive-widget=resizes-content` shrinks innerHeight directly.
+  //   • iOS: the keyboard overlays (innerHeight unchanged), so we fall back to vv.height.
+  // No body offset / transform — those broke the bottom bar (content bled through).
   useEffect(() => {
     const root = document.documentElement;
     const setH = () => {
       const vv = window.visualViewport;
-      const h = vv ? vv.height : window.innerHeight;
-      root.style.setProperty("--app-height", `${h}px`);
-      root.style.setProperty("--vv-offset", `${vv ? vv.offsetTop : 0}px`);
-      // Keyboard open ⇒ home indicator hidden ⇒ drop the safe-area bottom padding so the
-      // composer sits flush above the keyboard (no dead gap). 120px filters out URL-bar shrink.
+      // keyboard overlay detected only when the visual viewport is much shorter than
+      // the layout viewport (>120px filters out the URL-bar shrink, which is fine to ignore).
       const kbOpen = vv ? window.innerHeight - vv.height > 120 : false;
+      const h = kbOpen && vv ? vv.height : window.innerHeight;
+      root.style.setProperty("--app-height", `${h}px`);
+      // keyboard open ⇒ home indicator hidden ⇒ drop the safe-area gap below the composer
       root.classList.toggle("kb-open", kbOpen);
     };
     setH();
     window.addEventListener("resize", setH);
     window.addEventListener("orientationchange", setH);
     window.visualViewport?.addEventListener("resize", setH);
-    window.visualViewport?.addEventListener("scroll", setH);
     return () => {
       window.removeEventListener("resize", setH);
       window.removeEventListener("orientationchange", setH);
       window.visualViewport?.removeEventListener("resize", setH);
-      window.visualViewport?.removeEventListener("scroll", setH);
       root.classList.remove("kb-open");
     };
   }, []);
@@ -264,10 +264,7 @@ function Console() {
   return (
     <div
       className="flex overflow-hidden bg-bg text-ink flex-col md:flex-row"
-      style={{
-        height: "var(--app-height, 100dvh)",
-        transform: "translateY(var(--vv-offset, 0px))",
-      }}
+      style={{ height: "var(--app-height, 100dvh)" }}
     >
       {/* Sidebar (desktop) / Drawer (mobile) */}
       <aside className="hidden w-72 shrink-0 border-r border-line bg-bg-alt md:block">

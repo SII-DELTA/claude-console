@@ -9,16 +9,11 @@
 html,
 body {
   height: 100%;
-  overflow: hidden;
 }
 
 body {
   @apply bg-bg text-ink;
-  /* Pin the body to the layout viewport so the page itself never scrolls — the app
-     is a fixed-height flex column and only its inner regions scroll. This stops the
-     bottom tab bar from drifting into a gap (iOS dynamic toolbar / keyboard). */
-  position: fixed;
-  inset: 0;
+  min-height: 100dvh;
   -webkit-font-smoothing: antialiased;
   overscroll-behavior: none;
   touch-action: manipulation;
