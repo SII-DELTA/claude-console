@@ -25,6 +25,8 @@ export interface AgentRuntimeConfig {
   ptyFactory?: PtyFactory;
   enableFileWatcher?: boolean;
   whisperApiKey?: string;
+  /** Password login. Defaults to MAC_AGENT_PASSWORD. Unset → open access (no login). */
+  password?: string;
 }
 
 export interface AgentRuntimeHandle {
@@ -72,7 +74,8 @@ export async function startAgent(config: AgentRuntimeConfig): Promise<AgentRunti
   });
   // let session metadata report which live sessions our own driver owns
   claude.setDrivenPredicate((id) => driver.owns(id));
-  const auth = new AuthManager(store, bus, { password: process.env.MAC_AGENT_PASSWORD });
+  const password = config.password ?? process.env.MAC_AGENT_PASSWORD;
+  const auth = new AuthManager(store, bus, { password });
   const sessions = new SessionManager(store, bus, {
     workspaceId: workspaceReader.current().id,
     workspaceRoot: workspaceReader.current().rootPath,
@@ -90,9 +93,10 @@ export async function startAgent(config: AgentRuntimeConfig): Promise<AgentRunti
 
   await claude.start();
 
-  // Auth is on by default (safe for public exposure). MAC_AGENT_NO_AUTH=1 opts
-  // out for local use — but a configured password always enforces login.
-  const noAuth = process.env.MAC_AGENT_NO_AUTH === "1" && !process.env.MAC_AGENT_PASSWORD;
+  // No password configured → open access (clients connect directly, no login).
+  // Set MAC_AGENT_PASSWORD to enforce password login (required before exposing
+  // beyond loopback, e.g. over Tailscale).
+  const noAuth = !password;
 
   const app = await buildHttpApp({
     auth,

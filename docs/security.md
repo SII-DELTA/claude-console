@@ -8,12 +8,14 @@
 
 ## 鉴权
 
-* **密码登录**：设置 `MAC_AGENT_PASSWORD` 后，web 登录页输入密码，POST `/auth/login`
-  常量时间比对成功后签发长期 token。**任何暴露到回环以外的部署都必须设置密码。**
+* **开放模式（默认）**：未设 `MAC_AGENT_PASSWORD` 时 agent 开放直连，客户端经
+  `/health`（返回 `auth: "none"`）得知后**跳过登录**直接连接。仅适合回环/受信内网。
+* **密码登录**：设置 `MAC_AGENT_PASSWORD` 后，`/health` 返回 `auth: "password"`，
+  web 显示登录页，POST `/auth/login` 常量时间比对成功后签发长期 token。
+  **任何暴露到回环以外的部署都必须设置密码。**
 * token：256-bit URL-safe；存储于 SQLite `devices` 表，可吊销（`DELETE /devices/:id`）。
 * REST 用 `Authorization: Bearer <token>`；WS 用 `?token=` 首帧校验，非法帧立即关闭（4001）。
 * 失败限速：登录/配对 5 次/分钟锁定。
-* `MAC_AGENT_NO_AUTH=1` 仅供纯本机（回环）便捷调试，设了 `MAC_AGENT_PASSWORD` 时被忽略。
 
 ## 监听与暴露
 

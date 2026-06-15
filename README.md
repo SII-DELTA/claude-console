@@ -85,8 +85,9 @@ MAC_AGENT_PASSWORD=<password> MAC_AGENT_BIND=$(tailscale ip -4) ./scripts/instal
 
 ## 安全提示
 
-agent 默认仅绑定 `127.0.0.1`。一旦通过 `MAC_AGENT_BIND` 暴露到 Tailscale 接口，
-建议设置 `MAC_AGENT_PASSWORD` 开启密码登录，否则同一 tailnet 内任何能访问该端口的人
+未设 `MAC_AGENT_PASSWORD` 时 agent **开放直连**（无登录环节），仅适合回环本机使用。
+agent 默认仅绑定 `127.0.0.1`；一旦通过 `MAC_AGENT_BIND` 暴露到 Tailscale 接口，
+**务必**设置 `MAC_AGENT_PASSWORD` 开启密码登录，否则同一 tailnet 内任何能访问该端口的人
 都能驱动你的 `claude` CLI。**不要把 agent 绑到 `0.0.0.0` 或直接暴露公网。**
 详见 [docs/security.md](docs/security.md)。
 

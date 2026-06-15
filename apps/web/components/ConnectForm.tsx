@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ApiClient } from "../lib/api";
 import { useAppStore } from "../lib/store";
 import { ClaudeLogo } from "./ClaudeLogo";
@@ -26,15 +26,16 @@ export function ConnectForm() {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // "unknown": agent unreachable / not probed yet → show full form as fallback.
+  const [authMode, setAuthMode] = useState<"unknown" | "none" | "password">("unknown");
 
-  async function connect() {
+  async function connect(pwd = password) {
     setErr(null);
     setBusy(true);
     try {
       const base = url.replace(/\/$/, "");
       const api = new ApiClient(base);
-      // One generic call decides everything; the server never reveals its mode.
-      const res = await api.login({ password, deviceName: deviceName(), platform: "web" });
+      const res = await api.login({ password: pwd, deviceName: deviceName(), platform: "web" });
       setConnection({
         url: base,
         wsUrl: base.replace(/^http/, "ws") + "/ws",
@@ -55,6 +56,34 @@ export function ConnectForm() {
       setBusy(false);
     }
   }
+
+  /** Probe the agent's auth mode; returns it (or "unknown" if unreachable). */
+  async function probe(target: string): Promise<"unknown" | "none" | "password"> {
+    try {
+      const h = await new ApiClient(target.replace(/\/$/, "")).health();
+      const mode = h.auth === "none" ? "none" : "password";
+      setAuthMode(mode);
+      return mode;
+    } catch {
+      setAuthMode("unknown");
+      return "unknown";
+    }
+  }
+
+  // On load: if the agent runs open (no password), skip login and connect directly.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const mode = await probe(DEFAULT_URL);
+      if (!cancelled && mode === "none") void connect("");
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const needsPassword = authMode !== "none";
 
   return (
     <div className="flex min-h-screen items-center justify-center px-4">
@@ -80,26 +109,31 @@ export function ConnectForm() {
         <input
           value={url}
           onChange={(e) => setUrl(e.target.value)}
-          className="field mb-3"
+          onBlur={(e) => void probe(e.target.value)}
+          className={needsPassword ? "field mb-3" : "field mb-4"}
           autoCapitalize="off"
           autoCorrect="off"
           spellCheck={false}
         />
 
-        <label className="mb-1 block text-xs text-ink-dim">密码</label>
-        <input
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && connect()}
-          type="password"
-          autoComplete="current-password"
-          className="field mb-4"
-        />
+        {needsPassword && (
+          <>
+            <label className="mb-1 block text-xs text-ink-dim">密码</label>
+            <input
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && connect()}
+              type="password"
+              autoComplete="current-password"
+              className="field mb-4"
+            />
+          </>
+        )}
 
         {err && <p className="mb-3 text-sm text-danger">{err}</p>}
 
-        <button onClick={connect} disabled={busy} className="btn w-full">
-          {busy ? "登录中…" : "登录"}
+        <button onClick={() => connect()} disabled={busy} className="btn w-full">
+          {busy ? "连接中…" : needsPassword ? "登录" : "连接"}
         </button>
       </div>
     </div>

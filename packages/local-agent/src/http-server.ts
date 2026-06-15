@@ -66,9 +66,10 @@ export async function buildHttpApp(opts: BuildHttpOptions): Promise<FastifyInsta
     });
   }
 
-  // Minimal, unauthenticated: leaks nothing about auth mode / workspace.
+  // Unauthenticated probe. Exposes whether a password is required so clients can
+  // skip the login step when the agent runs open (no password configured).
   app.get("/health", async () => {
-    return { ok: true };
+    return { ok: true, version: opts.serverVersion, auth: opts.noAuth ? "none" : "password" } as const;
   });
 
   app.post("/auth/login", async (req, reply) => {

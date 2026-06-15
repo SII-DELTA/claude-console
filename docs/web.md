@@ -16,7 +16,7 @@ pnpm --filter @mac/web test     # 8 测试
 * `lib/store.ts` — Zustand：连接（localStorage 持久化）、会话列表、当前会话消息、流式 `stream` 缓冲、`driveStatus`；集成 `WsClient` 处理 `server:claude_*`。
 * `lib/ws.ts` — WebSocket 客户端（`?token=`，断线回调）。
 * `components/`
-  * `ConnectForm` — 服务器地址 + 密码（`MAC_AGENT_PASSWORD` 登录）。
+  * `ConnectForm` — 服务器地址；先探测 `/health`，开放模式直连免登录，配了密码才显示密码框。
   * `SessionList` — 会话列表（`isLive` 角标、搜索、新会话）。
   * `MessageView` — 结构化消息块：text / thinking(折叠) / tool_use(可展开入参) / tool_result(可展开)。
   * `Composer` — 底部输入栏（Enter 发送、流式时显示中断）。

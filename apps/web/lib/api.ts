@@ -61,7 +61,7 @@ export class ApiClient {
     return (await res.json()) as T;
   }
 
-  health(): Promise<{ ok: boolean }> {
+  health(): Promise<{ ok: boolean; version?: string; auth?: "none" | "password" | "pair" }> {
     return this.request("GET", "/health");
   }
 

@@ -20,6 +20,7 @@ beforeEach(async () => {
     enableFileWatcher: false,
     ptyFactory: mock.factory,
     allowedOrigins: ["*"],
+    password: "test-pw", // enforce auth so the 401/bearer checks apply
   });
 });
 

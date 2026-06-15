@@ -21,6 +21,7 @@ beforeEach(async () => {
     storagePath: storage,
     enableFileWatcher: false,
     ptyFactory: mock.factory,
+    password: "test-pw", // enforce auth so token checks apply
   });
 });
 
