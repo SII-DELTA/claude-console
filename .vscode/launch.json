@@ -1,0 +1,15 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run local-agent (cli)",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/packages/local-agent/dist/cli.js",
+      "args": ["--workspace", "${workspaceFolder}"],
+      "preLaunchTask": "build: local-agent",
+      "console": "integratedTerminal",
+      "outFiles": ["${workspaceFolder}/packages/local-agent/dist/**/*.js"]
+    }
+  ]
+}

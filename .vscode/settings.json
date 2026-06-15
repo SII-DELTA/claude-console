@@ -1,0 +1,5 @@
+{
+  "mobileAgentConsole.autoStart": true,
+  "mobileAgentConsole.serverPort": 7345,
+  "mobileAgentConsole.host": "127.0.0.1"
+}

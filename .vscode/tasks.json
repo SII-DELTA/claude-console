@@ -1,0 +1,32 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build: shared",
+      "type": "shell",
+      "command": "pnpm --filter @mac/shared build",
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "build",
+      "presentation": { "reveal": "silent", "panel": "shared" }
+    },
+    {
+      "label": "build: local-agent",
+      "type": "shell",
+      "command": "pnpm --filter @mac/local-agent build",
+      "options": { "cwd": "${workspaceFolder}" },
+      "dependsOn": ["build: shared"],
+      "group": { "kind": "build", "isDefault": true },
+      "presentation": { "reveal": "silent", "panel": "shared" },
+      "problemMatcher": "$tsc"
+    },
+    {
+      "label": "dev: agent + web",
+      "type": "shell",
+      "command": "./scripts/dev.sh",
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared" }
+    }
+  ]
+}

@@ -1,0 +1,63 @@
+{
+  "name": "@mac/local-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local Agent service: REST + WebSocket bridge that exposes PTY-managed agent sessions.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "mac-agent": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./cli": "./dist/cli.js",
+    "./dist/cli.js": "./dist/cli.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "postinstall": "node -e \"const {execSync}=require('child_process');const {platform,arch}=process;const h=require.resolve('node-pty/prebuilds/'+platform+'-'+arch+'/spawn-helper',{paths:[__dirname]});try{execSync('chmod +x '+h)}catch(e){}\"",
+    "dev": "tsx watch src/cli.ts --workspace ../..",
+    "start": "node dist/cli.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "echo 'local-agent: lint via typecheck'",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.0.1",
+    "@fastify/websocket": "^11.0.1",
+    "@mac/shared": "workspace:*",
+    "better-sqlite3": "^11.5.0",
+    "chokidar": "^4.0.1",
+    "fastify": "^5.1.0",
+    "form-data": "^4.0.1",
+    "nanoid": "^5.0.9",
+    "node-pty": "^1.1.0",
+    "qrcode": "^1.5.4",
+    "simple-git": "^3.27.0",
+    "strip-ansi": "^7.1.0",
+    "tencentcloud-sdk-nodejs-asr": "^4.1.247",
+    "ulid": "^2.3.0",
+    "ws": "^8.18.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.9.0",
+    "@types/qrcode": "^1.5.5",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}

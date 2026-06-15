@@ -1,0 +1,77 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  @apply bg-bg text-ink;
+  min-height: 100dvh;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Buttons */
+.btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-xl bg-accent px-4 py-2 font-medium text-white
+         transition-colors hover:bg-accent-dark disabled:cursor-not-allowed disabled:opacity-50;
+}
+.btn-ghost {
+  @apply inline-flex items-center justify-center gap-2 rounded-xl border border-line bg-transparent px-3 py-2
+         text-ink-dim transition-colors hover:bg-bg-raised hover:text-ink disabled:opacity-50;
+}
+
+.field {
+  @apply w-full rounded-xl border border-line bg-bg-alt px-3 py-2 text-ink placeholder:text-ink-faint
+         outline-none focus:border-accent;
+}
+
+/* thin scrollbars */
+.scroll-thin::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  @apply rounded-full bg-line;
+}
+.scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* blinking cursor for streaming */
+.cursor-blink::after {
+  content: "▍";
+  @apply text-accent;
+  animation: blink 1s steps(2, start) infinite;
+}
+@keyframes blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+/* safe-area padding for mobile (notch / home indicator) */
+.pb-safe {
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+}
+.pt-safe {
+  padding-top: max(0.5rem, env(safe-area-inset-top));
+}
+
+/* markdown: reset inline-code styling when nested inside a code block */
+.md-codeblock code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+}

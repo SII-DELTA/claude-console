@@ -1,0 +1,358 @@
+import { promises as fs } from "node:fs";
+import { existsSync } from "node:fs";
+import { join, basename } from "node:path";
+import { homedir } from "node:os";
+import chokidar, { type FSWatcher } from "chokidar";
+import {
+  LIVE_WINDOW_MS,
+  type ClaudeMessage,
+  type ClaudeProject,
+  type ClaudeSession,
+} from "@mac/shared";
+import type { Bus } from "./bus.js";
+import {
+  accumulate,
+  deriveTitle,
+  encodeProjectDir,
+  newAccumulator,
+  parseLine,
+  type SessionAccumulator,
+} from "./util/claude-jsonl.js";
+
+/**
+ * Reads + mirrors Claude Code native sessions from
+ * `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`.
+ *
+ * - listSessions()/getSession() parse on demand.
+ * - start() begins a chokidar watch that incrementally tails appended lines and
+ *   emits `claude:message` / `claude:session_updated` on the bus.
+ */
+/** session ids are UUID-ish; project dirs are alnum+dash — reject anything that
+ *  could traverse the filesystem (slashes, dots, ..). */
+const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
+const SAFE_DIR = /^[A-Za-z0-9_-]{1,256}$/;
+
+export class ClaudeStore {
+  private watcher: FSWatcher | null = null;
+  /** byte offset already consumed per file path */
+  private offsets = new Map<string, number>();
+  /** explicit active project dir override (set when the user switches project) */
+  private activeDir: string | null = null;
+  /** predicate injected by the runtime: is this session driven by our agent? */
+  private drivenPredicate: ((id: string) => boolean) | null = null;
+
+  constructor(
+    private workspaceRoot: string,
+    private workspaceId: string,
+    private readonly bus?: Bus,
+    private readonly projectsRoot = join(homedir(), ".claude", "projects"),
+  ) {}
+
+  setWorkspace(workspaceRoot: string, workspaceId: string): void {
+    this.workspaceRoot = workspaceRoot;
+    this.workspaceId = workspaceId;
+    this.activeDir = null;
+    if (this.watcher) {
+      void this.restart();
+    }
+  }
+
+  /** Lets the runtime tell us which sessions our own driver currently owns. */
+  setDrivenPredicate(fn: (id: string) => boolean): void {
+    this.drivenPredicate = fn;
+  }
+
+  /** cwd used as the default for new sessions in the active project. */
+  activeCwd(): string {
+    return this.workspaceRoot;
+  }
+
+  private projectDir(): string {
+    return this.activeDir
+      ? join(this.projectsRoot, this.activeDir)
+      : join(this.projectsRoot, encodeProjectDir(this.workspaceRoot));
+  }
+
+  /** List all Claude Code projects under ~/.claude/projects. */
+  async listProjects(): Promise<ClaudeProject[]> {
+    const activeDirName = this.activeDir ?? encodeProjectDir(this.workspaceRoot);
+    const entries = await safeListDirs(this.projectsRoot);
+    const projects = await Promise.all(
+      entries.map((dir) => this.readProjectMeta(dir, dir === activeDirName)),
+    );
+    return projects
+      .filter((p): p is ClaudeProject => !!p)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  /** Switch the active project to the given encoded dir name. */
+  async switchProject(dir: string): Promise<ClaudeProject | null> {
+    if (!SAFE_DIR.test(dir)) return null;
+    const full = join(this.projectsRoot, dir);
+    if (!existsSync(full)) return null;
+    const meta = await this.readProjectMeta(dir, true);
+    if (!meta) return null;
+    this.activeDir = dir;
+    this.workspaceRoot = meta.cwd; // new sessions land in the real project cwd
+    this.workspaceId = dir;
+    if (this.watcher) await this.restart();
+    return meta;
+  }
+
+  private async readProjectMeta(dir: string, active: boolean): Promise<ClaudeProject | null> {
+    const full = join(this.projectsRoot, dir);
+    const files = (await safeList(full)).filter((f) => f.endsWith(".jsonl"));
+    if (files.length === 0) return null;
+    let cwd = "";
+    let updatedAt = "";
+    let sessionCount = 0;
+    let liveCount = 0;
+    for (const f of files) {
+      const file = join(full, f);
+      const mt = await safeMtimeMs(file);
+      if (!cwd) {
+        // read just enough to learn the project's real cwd
+        const acc = await this.foldFile(file, false);
+        if (acc.cwd) cwd = acc.cwd;
+        if (acc.messageCount > 0) sessionCount += 1;
+      } else {
+        sessionCount += 1;
+      }
+      const iso = mt ? new Date(mt).toISOString() : "";
+      if (iso > updatedAt) updatedAt = iso;
+      if (mt != null && nowMs() - mt < LIVE_WINDOW_MS) liveCount += 1;
+    }
+    const resolvedCwd = cwd || dir.replace(/^-/, "/").replace(/-/g, "/");
+    return {
+      dir,
+      cwd: resolvedCwd,
+      name: resolvedCwd.split("/").filter(Boolean).pop() ?? dir,
+      sessionCount,
+      liveCount,
+      updatedAt: updatedAt || new Date(0).toISOString(),
+      active,
+    };
+  }
+
+  private sessionFile(id: string): string {
+    return join(this.projectDir(), `${id}.jsonl`);
+  }
+
+  async listSessions(): Promise<ClaudeSession[]> {
+    const dir = this.projectDir();
+    const files = await safeList(dir);
+    const sessions = await Promise.all(
+      files
+        .filter((f) => f.endsWith(".jsonl"))
+        .map((f) => this.readSessionMeta(join(dir, f))),
+    );
+    return sessions
+      .filter((s): s is ClaudeSession => !!s && s.messageCount > 0)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  async getSession(
+    id: string,
+    opts?: { limit?: number; before?: number },
+  ): Promise<{
+    session: ClaudeSession;
+    messages: ClaudeMessage[];
+    total: number;
+    offset: number;
+  } | null> {
+    if (!SAFE_ID.test(id)) return null;
+    const file = this.sessionFile(id);
+    if (!existsSync(file)) return null;
+    const acc = await this.foldFile(file, true);
+    const session = this.buildSession(id, file, acc, await safeMtimeMs(file));
+    if (!session) return null;
+    const all = acc.messages;
+    const total = all.length;
+    // No limit → whole history (back-compat for internal callers / driver).
+    // before: absolute index; return the page ending just before it.
+    const end = opts?.before != null ? Math.max(0, Math.min(opts.before, total)) : total;
+    const limit = opts?.limit != null && opts.limit > 0 ? opts.limit : total;
+    const start = Math.max(0, end - limit);
+    return { session, messages: all.slice(start, end), total, offset: start };
+  }
+
+  /** Lightweight meta read (no message retention). */
+  private async readSessionMeta(file: string): Promise<ClaudeSession | null> {
+    const acc = await this.foldFile(file, false);
+    return this.buildSession(basename(file, ".jsonl"), file, acc, await safeMtimeMs(file));
+  }
+
+  private async foldFile(file: string, keepMessages: boolean): Promise<SessionAccumulator> {
+    const acc = newAccumulator();
+    let raw: string;
+    try {
+      raw = await fs.readFile(file, "utf8");
+    } catch {
+      return acc;
+    }
+    for (const line of raw.split("\n")) {
+      const parsed = parseLine(line);
+      if (parsed) accumulate(acc, parsed, keepMessages);
+    }
+    return acc;
+  }
+
+  private buildSession(
+    id: string,
+    file: string,
+    acc: SessionAccumulator,
+    mtimeMs: number | null,
+  ): ClaudeSession | null {
+    if (acc.messageCount === 0) return null;
+    const updatedAt =
+      acc.lastTimestamp ?? (mtimeMs ? new Date(mtimeMs).toISOString() : new Date(0).toISOString());
+    const isLive = mtimeMs != null && nowMs() - mtimeMs < LIVE_WINDOW_MS;
+    return {
+      id,
+      title: deriveTitle(acc, id),
+      workspaceId: this.workspaceId,
+      cwd: acc.cwd ?? this.workspaceRoot,
+      sessionFilePath: file,
+      updatedAt,
+      messageCount: acc.messageCount,
+      userMessageCount: acc.userMessageCount,
+      assistantMessageCount: acc.assistantMessageCount,
+      toolUseCount: acc.toolUseCount,
+      modelId: acc.modelId,
+      isLive,
+      drivenByAgent: this.drivenPredicate?.(id) ?? false,
+      preview: acc.firstUserText?.slice(0, 140),
+    };
+  }
+
+  /** Returns true if the session file is being written within the live window. */
+  async isLive(id: string): Promise<boolean> {
+    if (!SAFE_ID.test(id)) return false;
+    const m = await safeMtimeMs(this.sessionFile(id));
+    return m != null && nowMs() - m < LIVE_WINDOW_MS;
+  }
+
+  async start(): Promise<void> {
+    if (this.watcher) return;
+    const dir = this.projectDir();
+    await fs.mkdir(dir, { recursive: true }).catch(() => {});
+    // seed offsets to current file sizes so we only stream *new* lines
+    for (const f of await safeList(dir)) {
+      if (f.endsWith(".jsonl")) {
+        const p = join(dir, f);
+        this.offsets.set(p, (await safeSize(p)) ?? 0);
+      }
+    }
+    // chokidar v4 dropped glob support — watch the dir and filter in handlers.
+    this.watcher = chokidar.watch(dir, {
+      ignoreInitial: true,
+      depth: 0,
+      awaitWriteFinish: { stabilityThreshold: 80, pollInterval: 30 },
+    });
+    this.watcher.on("add", (p) => {
+      if (p.endsWith(".jsonl")) void this.onFileChanged(p);
+    });
+    this.watcher.on("change", (p) => {
+      if (p.endsWith(".jsonl")) void this.onFileChanged(p);
+    });
+    // Wait for the initial scan so appends right after start() are not missed.
+    await new Promise<void>((resolve) => {
+      const w = this.watcher;
+      if (!w) return resolve();
+      w.once("ready", () => resolve());
+    });
+  }
+
+  private async onFileChanged(file: string): Promise<void> {
+    const id = basename(file, ".jsonl");
+    const from = this.offsets.get(file) ?? 0;
+    const size = (await safeSize(file)) ?? 0;
+    if (size < from) {
+      // file truncated/rewritten — reset
+      this.offsets.set(file, 0);
+      return this.onFileChanged(file);
+    }
+    if (size > from) {
+      const chunk = await readRange(file, from, size);
+      // keep only complete lines; stash partial remainder by rewinding offset
+      const lastNl = chunk.lastIndexOf("\n");
+      const consumable = lastNl >= 0 ? chunk.slice(0, lastNl) : "";
+      const consumedBytes = lastNl >= 0 ? Buffer.byteLength(chunk.slice(0, lastNl + 1), "utf8") : 0;
+      this.offsets.set(file, from + consumedBytes);
+      for (const line of consumable.split("\n")) {
+        const parsed = parseLine(line);
+        if (parsed?.message) {
+          this.bus?.emit("claude:message", parsed.message.sessionId, parsed.message);
+        }
+      }
+    }
+    // refresh session meta regardless (isLive / counts changed)
+    const meta = await this.readSessionMeta(file);
+    if (meta) this.bus?.emit("claude:session_updated", meta);
+    void id;
+  }
+
+  private async restart(): Promise<void> {
+    await this.stop();
+    this.offsets.clear();
+    await this.start();
+  }
+
+  async stop(): Promise<void> {
+    if (this.watcher) {
+      await this.watcher.close();
+      this.watcher = null;
+    }
+  }
+}
+
+/* ─────────────────────────── fs helpers ─────────────────────────── */
+
+function nowMs(): number {
+  return Date.now();
+}
+
+async function safeList(dir: string): Promise<string[]> {
+  try {
+    return await fs.readdir(dir);
+  } catch {
+    return [];
+  }
+}
+
+async function safeListDirs(dir: string): Promise<string[]> {
+  try {
+    const ents = await fs.readdir(dir, { withFileTypes: true });
+    return ents.filter((e) => e.isDirectory()).map((e) => e.name);
+  } catch {
+    return [];
+  }
+}
+
+async function safeMtimeMs(file: string): Promise<number | null> {
+  try {
+    return (await fs.stat(file)).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
+async function safeSize(file: string): Promise<number | null> {
+  try {
+    return (await fs.stat(file)).size;
+  } catch {
+    return null;
+  }
+}
+
+async function readRange(file: string, start: number, end: number): Promise<string> {
+  const handle = await fs.open(file, "r");
+  try {
+    const len = end - start;
+    const buf = Buffer.alloc(len);
+    await handle.read(buf, 0, len, start);
+    return buf.toString("utf8");
+  } finally {
+    await handle.close();
+  }
+}
