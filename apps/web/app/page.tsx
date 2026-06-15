@@ -140,11 +140,15 @@ function Console() {
     const root = document.documentElement;
     const setH = () => {
       const vv = window.visualViewport;
-      const h = vv ? vv.height : window.innerHeight;
-      root.style.setProperty("--app-height", `${h}px`);
-      root.style.setProperty("--vv-top", `${vv ? vv.offsetTop : 0}px`);
-      // keyboard open ⇒ home indicator hidden ⇒ drop the safe-area gap below the composer
+      // keyboard open ⇒ visual viewport is much shorter than the layout viewport
+      // (>120px filters out URL-bar shrink). At rest, fill the whole screen with
+      // innerHeight so the bottom bar sits flush — vv.height can under-report the
+      // screen height in standalone PWA and leave a gap below the tab bar.
       const kbOpen = vv ? window.innerHeight - vv.height > 120 : false;
+      const h = kbOpen && vv ? vv.height : window.innerHeight;
+      root.style.setProperty("--app-height", `${h}px`);
+      root.style.setProperty("--vv-top", `${kbOpen && vv ? vv.offsetTop : 0}px`);
+      // keyboard open ⇒ home indicator hidden ⇒ drop the safe-area gap below the composer
       root.classList.toggle("kb-open", kbOpen);
     };
     setH();
