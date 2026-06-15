@@ -143,6 +143,8 @@ interface AppState {
   refreshPendingPermission: (sessionId: string) => Promise<void>;
   /** Dismiss a session's lingering question(s) without answering (clears the badge). */
   dismissQuestion: (sessionId: string) => Promise<void>;
+  /** Close the current picker without answering (decline if live, else dismiss). */
+  closePermission: () => Promise<void>;
   /** Surface a user-facing error in the global dismissable Toast. */
   setError: (msg: string) => void;
   clearError: () => void;
@@ -481,6 +483,27 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
+  async closePermission() {
+    const api = get().api;
+    const p = get().pendingPermission;
+    if (!api || !p) return;
+    // recovered (process gone) → can't decline live; dismiss it instead
+    if (p.live === false) {
+      await get().dismissQuestion(p.sessionId);
+      return;
+    }
+    set({ pendingPermission: null }); // optimistic close
+    try {
+      await api.declineClaudePermission(p.sessionId, p.requestId);
+    } catch (err) {
+      if (isLiveConflict(err)) {
+        // 409 = already resolved/closed; stay dismissed
+      } else {
+        set({ pendingPermission: p, error: "关闭失败，请重试" });
+      }
+    }
+  },
+
   async dismissQuestion(sessionId) {
     const api = get().api;
     if (!api || !sessionId) return;
@@ -617,16 +640,20 @@ function handleServerMessage(
       break;
     }
     case "server:claude_permission_request": {
-      if (msg.sessionId !== get().selectedId) break;
-      set({
-        pendingPermission: {
-          sessionId: msg.sessionId,
-          requestId: msg.requestId,
-          toolName: msg.toolName,
-          questions: msg.questions,
-        },
-      });
+      // notify regardless of which session is open — a question on a background
+      // session still needs the user (the bell badge alone is easy to miss).
       notify("❓ Claude 需要你选择", get().sessions.find((s) => s.id === msg.sessionId)?.title);
+      if (msg.sessionId === get().selectedId) {
+        set({
+          pendingPermission: {
+            sessionId: msg.sessionId,
+            requestId: msg.requestId,
+            toolName: msg.toolName,
+            questions: msg.questions,
+            live: true,
+          },
+        });
+      }
       break;
     }
     case "server:claude_permission_cancel": {

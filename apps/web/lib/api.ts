@@ -174,6 +174,11 @@ export class ApiClient {
     return this.request("POST", `/claude/sessions/${id}/dismiss-question`);
   }
 
+  /** Close a live picker without answering (claude is told the user declined). */
+  declineClaudePermission(id: string, requestId: string): Promise<{ ok: true }> {
+    return this.request("POST", `/claude/sessions/${id}/decline-permission`, { requestId });
+  }
+
   /** Answer a pending interactive permission (AskUserQuestion, 方案 B). */
   answerClaudePermission(
     id: string,

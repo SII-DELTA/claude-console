@@ -458,7 +458,6 @@ export class ClaudeDriver {
     if (!w) return false;
     const pend = w.pending.get(requestId);
     if (!pend) return false;
-    w.pending.delete(requestId);
     const baseInput = (pend.input && typeof pend.input === "object" ? pend.input : {}) as Record<
       string,
       unknown
@@ -471,10 +470,51 @@ export class ClaudeDriver {
         response: { behavior: "allow", updatedInput: { ...baseInput, answers } },
       },
     });
+    // Write failed (stdin gone, process died mid-flight): keep both the in-memory
+    // and durable record so the HTTP layer can fall back to the resume-recovery
+    // path — the answer must not be silently dropped.
+    if (!ok) return false;
+    w.pending.delete(requestId);
     this.opts.pendingStore?.deletePendingPermission(requestId);
     this.opts.bus.emit("claude:permission_cancel", sessionId, requestId); // dismiss the picker
     this.touch(sessionId); // re-arm the idle reaper; the turn resumes
-    return ok;
+    return true;
+  }
+
+  /**
+   * Close a live AskUserQuestion WITHOUT answering: tell claude the user declined
+   * (allow with no answers → "The user did not answer the questions.", a clean
+   * non-error result), so the turn continues instead of hanging. Returns false if
+   * the request isn't live in-process.
+   */
+  declinePermission(sessionId: string, requestId: string): boolean {
+    const w = this.procs.get(sessionId);
+    if (!w) return false;
+    const pend = w.pending.get(requestId);
+    if (!pend) return false;
+    const baseInput = (pend.input && typeof pend.input === "object" ? pend.input : {}) as Record<
+      string,
+      unknown
+    >;
+    const ok = this.writeControl(sessionId, {
+      type: "control_response",
+      response: {
+        subtype: "success",
+        request_id: requestId,
+        response: { behavior: "allow", updatedInput: { ...baseInput } },
+      },
+    });
+    if (!ok) return false;
+    w.pending.delete(requestId);
+    this.opts.pendingStore?.deletePendingPermission(requestId);
+    this.opts.bus.emit("claude:permission_cancel", sessionId, requestId);
+    this.touch(sessionId);
+    return true;
+  }
+
+  /** Drop durable pending rows for a session without killing the process. */
+  clearPersistedPending(sessionId: string): void {
+    this.opts.pendingStore?.deletePendingPermissionsBySession(sessionId);
   }
 
   /**

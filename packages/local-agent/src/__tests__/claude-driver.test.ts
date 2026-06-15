@@ -389,4 +389,30 @@ describe("ClaudeDriver interactive permissions (方案 B)", () => {
     const { driver } = setupB();
     expect(await driver.recoverAnswerPermission("S1", "nope", { "Pick?": "A" })).toBe(false);
   });
+
+  it("declinePermission closes the picker with allow + no answers (clean decline)", () => {
+    const { driver, proc, bus, pendingStore } = setupB();
+    let cancelled = "";
+    bus.on("claude:permission_cancel", (_s, rid) => (cancelled = rid));
+    const { sessionId } = driver.newSession("ask");
+    proc.stdout.emit("data", canUse("req7", "AskUserQuestion", ASK_INPUT) + "\n");
+    expect(driver.declinePermission(sessionId, "req7")).toBe(true);
+    const resp = writes(proc).find(
+      (w) => w.type === "control_response" && w.response?.response?.behavior === "allow",
+    );
+    expect(resp.response.response.updatedInput.answers).toBeUndefined(); // declined: no answers
+    expect(cancelled).toBe("req7");
+    expect(pendingStore.rows.has("req7")).toBe(false);
+    expect(driver.declinePermission(sessionId, "req7")).toBe(false); // no longer pending
+  });
+
+  it("answerPermission keeps the request when the stdin write fails (no lost answer)", () => {
+    const { driver, proc, pendingStore } = setupB();
+    const { sessionId } = driver.newSession("ask");
+    proc.stdout.emit("data", canUse("req8", "AskUserQuestion", ASK_INPUT) + "\n");
+    proc.stdin.destroyed = true; // simulate the process dying mid-flight
+    expect(driver.answerPermission(sessionId, "req8", { "Pick?": "A" })).toBe(false);
+    // durable row preserved so the HTTP layer can fall back to resume-recovery
+    expect(pendingStore.rows.has("req8")).toBe(true);
+  });
 });

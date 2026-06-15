@@ -70,6 +70,7 @@ function Console() {
     interrupt,
     answerPermission,
     dismissQuestion,
+    closePermission,
     pendingPermission,
     loadSessions,
     setConnection,
@@ -424,6 +425,8 @@ function Console() {
             )}
             <QuestionPanel
               questions={bPermission.questions}
+              onClose={() => void closePermission()}
+              closeTitle={bPermission.live === false ? "忽略此提问" : "取消（不回答，让 Claude 继续）"}
               onSubmit={(_text, structured) => {
                 const answers: Record<string, string | string[]> = {};
                 for (const a of structured) {
@@ -436,20 +439,12 @@ function Console() {
         )}
 
         {pendingQuestions && !composerLocked && (
-          <div>
-            <QuestionPanel
-              questions={pendingQuestions}
-              onSubmit={(answer) => void sendPrompt(answer, externalLive ? { force: true } : undefined)}
-            />
-            <div className="mx-auto mb-1 max-w-3xl px-1 text-right">
-              <button
-                onClick={() => selectedId && void dismissQuestion(selectedId)}
-                className="text-[11px] text-ink-faint underline-offset-2 hover:text-ink-dim hover:underline"
-              >
-                忽略此提问
-              </button>
-            </div>
-          </div>
+          <QuestionPanel
+            questions={pendingQuestions}
+            onClose={() => selectedId && void dismissQuestion(selectedId)}
+            closeTitle="忽略此提问"
+            onSubmit={(answer) => void sendPrompt(answer, externalLive ? { force: true } : undefined)}
+          />
         )}
 
 

@@ -80,11 +80,16 @@ export interface AskAnswer {
 export function QuestionPanel({
   questions,
   onSubmit,
+  onClose,
+  closeTitle,
   disabled,
 }: {
   questions: AskQuestion[];
   /** receives both a human-readable string (方案 A) and structured answers (方案 B). */
   onSubmit: (answer: string, structured: AskAnswer[]) => void;
+  /** close the picker without answering (✕). */
+  onClose?: () => void;
+  closeTitle?: string;
   disabled?: boolean;
 }) {
   // selected[qIndex] = set of chosen labels
@@ -129,10 +134,24 @@ export function QuestionPanel({
   return (
     <div
       ref={ref}
-      className={`mx-auto mb-2 max-w-3xl rounded-2xl border bg-bg-alt p-3 transition-shadow duration-700 ${
+      className={`relative mx-auto mb-2 max-w-3xl rounded-2xl border bg-bg-alt p-3 transition-shadow duration-700 ${
         flash ? "border-accent shadow-[0_0_0_3px_rgba(217,119,87,0.35)]" : "border-accent/30"
       }`}
     >
+      {onClose && (
+        <button
+          onClick={onClose}
+          disabled={disabled}
+          title={closeTitle ?? "关闭（不回答）"}
+          aria-label={closeTitle ?? "关闭（不回答）"}
+          className="absolute right-2 top-2 grid h-6 w-6 place-items-center rounded-full text-ink-faint transition-colors hover:bg-bg-raised hover:text-ink"
+        >
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
+            <line x1="6" y1="6" x2="18" y2="18" />
+            <line x1="18" y1="6" x2="6" y2="18" />
+          </svg>
+        </button>
+      )}
       {questions.map((q, qi) => (
         <div key={qi} className={qi > 0 ? "mt-4" : ""}>
           <div className="mb-2 flex items-center gap-2">

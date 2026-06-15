@@ -355,7 +355,31 @@ export async function buildHttpApp(opts: BuildHttpOptions): Promise<FastifyInsta
         opts.claude.addDismissedQuestions(ids);
         await opts.claude.refreshSession(id);
       }
+      // also drop any durable pending row so a recovered picker won't re-surface
+      opts.driver.clearPersistedPending(id);
       return { ok: true, dismissed: ids.length };
+    },
+  );
+
+  // Close a live picker without answering: claude is told the user declined.
+  app.post<{ Params: { id: string } }>(
+    "/claude/sessions/:id/decline-permission",
+    async (req, reply) => {
+      const parsed = ClaudeAnswerPermissionBodySchema.pick({ requestId: true }).safeParse(req.body);
+      if (!parsed.success) {
+        reply.code(400);
+        return { error: "bad_request", code: ERROR_CODES.BAD_REQUEST, issues: parsed.error.issues };
+      }
+      const ok = opts.driver.declinePermission(req.params.id, parsed.data.requestId);
+      if (!ok) {
+        reply.code(409);
+        return {
+          error: "permission_not_pending",
+          code: ERROR_CODES.SESSION_FAILED,
+          message: "该问题已失效（可能已回答或会话已结束）",
+        };
+      }
+      return { ok: true };
     },
   );
 
