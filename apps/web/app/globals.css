@@ -69,6 +69,10 @@ body {
 .pb-safe {
   padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
 }
+/* keyboard open ⇒ home indicator hidden ⇒ drop the safe-area gap below the composer */
+.kb-open .pb-safe {
+  padding-bottom: 0.5rem;
+}
 .pt-safe {
   padding-top: max(0.5rem, env(safe-area-inset-top));
 }

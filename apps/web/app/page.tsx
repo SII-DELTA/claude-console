@@ -142,6 +142,10 @@ function Console() {
       const h = vv ? vv.height : window.innerHeight;
       root.style.setProperty("--app-height", `${h}px`);
       root.style.setProperty("--vv-offset", `${vv ? vv.offsetTop : 0}px`);
+      // Keyboard open ⇒ home indicator hidden ⇒ drop the safe-area bottom padding so the
+      // composer sits flush above the keyboard (no dead gap). 120px filters out URL-bar shrink.
+      const kbOpen = vv ? window.innerHeight - vv.height > 120 : false;
+      root.classList.toggle("kb-open", kbOpen);
     };
     setH();
     window.addEventListener("resize", setH);
@@ -153,6 +157,7 @@ function Console() {
       window.removeEventListener("orientationchange", setH);
       window.visualViewport?.removeEventListener("resize", setH);
       window.visualViewport?.removeEventListener("scroll", setH);
+      root.classList.remove("kb-open");
     };
   }, []);
 
