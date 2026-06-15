@@ -130,33 +130,33 @@ function Console() {
   // reset the takeover arm whenever the selected session changes
   useEffect(() => setTakeoverArmed(false), [selectedId]);
 
-  // Pin layout to the real visible height. At rest we use window.innerHeight (the
-  // proven-good geometry — bottom tab bar sits flush at the screen bottom). Only when
-  // the soft keyboard is actually open do we clamp to visualViewport.height so the
-  // composer stays above the keyboard:
-  //   • Android: `interactive-widget=resizes-content` shrinks innerHeight directly.
-  //   • iOS: the keyboard overlays (innerHeight unchanged), so we fall back to vv.height.
-  // No body offset / transform — those broke the bottom bar (content bled through).
+  // The app shell is `position: fixed` and sized to the visualViewport (see the root
+  // div + globals.css). This is the only reliable iOS-PWA keyboard fix: in standalone
+  // mode window.innerHeight never changes and the OS scrolls the *layout* viewport to
+  // reveal the focused input — which shoves an in-flow layout up off-screen. By pinning
+  // a fixed shell to visualViewport.height (area above the keyboard) and following its
+  // offsetTop, the composer always sits right above the keyboard and nothing scrolls.
   useEffect(() => {
     const root = document.documentElement;
     const setH = () => {
       const vv = window.visualViewport;
-      // keyboard overlay detected only when the visual viewport is much shorter than
-      // the layout viewport (>120px filters out the URL-bar shrink, which is fine to ignore).
-      const kbOpen = vv ? window.innerHeight - vv.height > 120 : false;
-      const h = kbOpen && vv ? vv.height : window.innerHeight;
+      const h = vv ? vv.height : window.innerHeight;
       root.style.setProperty("--app-height", `${h}px`);
+      root.style.setProperty("--vv-top", `${vv ? vv.offsetTop : 0}px`);
       // keyboard open ⇒ home indicator hidden ⇒ drop the safe-area gap below the composer
+      const kbOpen = vv ? window.innerHeight - vv.height > 120 : false;
       root.classList.toggle("kb-open", kbOpen);
     };
     setH();
     window.addEventListener("resize", setH);
     window.addEventListener("orientationchange", setH);
     window.visualViewport?.addEventListener("resize", setH);
+    window.visualViewport?.addEventListener("scroll", setH);
     return () => {
       window.removeEventListener("resize", setH);
       window.removeEventListener("orientationchange", setH);
       window.visualViewport?.removeEventListener("resize", setH);
+      window.visualViewport?.removeEventListener("scroll", setH);
       root.classList.remove("kb-open");
     };
   }, []);
@@ -263,8 +263,8 @@ function Console() {
 
   return (
     <div
-      className="flex overflow-hidden bg-bg text-ink flex-col md:flex-row"
-      style={{ height: "var(--app-height, 100dvh)" }}
+      className="fixed inset-x-0 flex overflow-hidden bg-bg text-ink flex-col md:flex-row"
+      style={{ top: "var(--vv-top, 0px)", height: "var(--app-height, 100dvh)" }}
     >
       {/* Sidebar (desktop) / Drawer (mobile) */}
       <aside className="hidden w-72 shrink-0 border-r border-line bg-bg-alt md:block">
@@ -294,7 +294,7 @@ function Console() {
             wsConnected={wsConnected}
             attentionCount={attentionCount}
             onBell={() => setMobileTab("dashboard")}
-            onRefresh={() => void loadSessions()}
+            onRefresh={() => Promise.all([loadSessions(), loadProjects()])}
           />
           <div className="min-h-0 flex-1">
             {mobileTab === "dashboard" && (
@@ -551,8 +551,19 @@ function HomeHeader({
   wsConnected: boolean;
   attentionCount: number;
   onBell: () => void;
-  onRefresh: () => void;
+  onRefresh: () => void | Promise<unknown>;
 }) {
+  const [refreshing, setRefreshing] = useState(false);
+  async function doRefresh() {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await onRefresh();
+    } finally {
+      // keep the spin visible long enough to read as a deliberate refresh
+      setTimeout(() => setRefreshing(false), 500);
+    }
+  }
   return (
     <header className="flex shrink-0 items-center gap-2 border-b border-line bg-bg-alt px-3 py-2.5 pt-safe">
       <ClaudeLogo size={22} className="text-[#D97757]" />
@@ -576,12 +587,13 @@ function HomeHeader({
           )}
         </button>
         <button
-          onClick={onRefresh}
+          onClick={() => void doRefresh()}
+          disabled={refreshing}
           aria-label="刷新"
           title="刷新"
-          className="flex h-9 w-9 items-center justify-center rounded-xl border border-line text-ink-dim transition-colors hover:bg-bg-raised hover:text-ink"
+          className="flex h-9 w-9 items-center justify-center rounded-xl border border-line text-ink-dim transition-colors hover:bg-bg-raised hover:text-ink disabled:opacity-60"
         >
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={refreshing ? "animate-spin" : ""}>
             <path d="M21 12a9 9 0 1 1-2.64-6.36" />
             <polyline points="21 3 21 9 15 9" />
           </svg>
