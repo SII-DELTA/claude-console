@@ -64,6 +64,21 @@ body {
   }
 }
 
+/* App shell positioning. At rest: `inset: 0` fills the viewport edge-to-edge — the
+   browser defines the true bottom, so there's never a gap below the tab bar regardless
+   of how innerHeight/visualViewport report on a given device. Only when the keyboard is
+   open do we pin the top to the visual viewport and use an explicit height so the bottom
+   lifts above the keyboard (iOS overlays the keyboard; this keeps the composer visible). */
+.app-shell {
+  position: fixed;
+  inset: 0;
+}
+.kb-open .app-shell {
+  top: var(--vv-top, 0px);
+  bottom: auto;
+  height: var(--app-height, 100dvh);
+}
+
 /* safe-area padding for mobile (notch / home indicator) */
 .pb-safe {
   padding-bottom: max(0.75rem, env(safe-area-inset-bottom));

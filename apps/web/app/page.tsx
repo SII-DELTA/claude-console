@@ -266,10 +266,7 @@ function Console() {
   }
 
   return (
-    <div
-      className="fixed inset-x-0 flex overflow-hidden bg-bg text-ink flex-col md:flex-row"
-      style={{ top: "var(--vv-top, 0px)", height: "var(--app-height, 100dvh)" }}
-    >
+    <div className="app-shell flex overflow-hidden bg-bg text-ink flex-col md:flex-row">
       {/* Sidebar (desktop) / Drawer (mobile) */}
       <aside className="hidden w-72 shrink-0 border-r border-line bg-bg-alt md:block">
         <Brand
