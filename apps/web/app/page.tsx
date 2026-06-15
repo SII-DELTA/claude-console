@@ -273,6 +273,7 @@ function Console() {
                 onOpen={selectAndClose}
                 onSwitchProject={(dir) => void switchProject(dir)}
                 onShowAll={() => setMobileTab("sessions")}
+                onIgnore={(id) => void dismissQuestion(id)}
               />
             )}
             {mobileTab === "sessions" && (

@@ -39,24 +39,35 @@ const TABS: { id: MobileTab; label: string; icon: React.ReactNode }[] = [
 export function BottomTabs({
   active,
   onChange,
+  badges,
 }: {
   active: MobileTab;
   onChange: (t: MobileTab) => void;
+  /** per-tab count badge (e.g. dashboard = sessions needing attention) */
+  badges?: Partial<Record<MobileTab, number>>;
 }) {
   return (
     <nav className="flex shrink-0 border-t border-line bg-bg-alt pb-safe md:hidden">
       {TABS.map((t) => {
         const on = t.id === active;
+        const badge = badges?.[t.id] ?? 0;
         return (
           <button
             key={t.id}
             onClick={() => onChange(t.id)}
-            className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px] transition-colors ${
+            className={`relative flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px] transition-colors ${
               on ? "text-accent" : "text-ink-faint hover:text-ink-dim"
             }`}
             aria-current={on ? "page" : undefined}
           >
-            {t.icon}
+            <span className="relative">
+              {t.icon}
+              {badge > 0 && (
+                <span className="absolute -right-2.5 -top-1.5 grid h-4 min-w-4 place-items-center rounded-full bg-accent px-1 text-[10px] font-semibold leading-none text-white">
+                  {badge > 9 ? "9+" : badge}
+                </span>
+              )}
+            </span>
             <span>{t.label}</span>
           </button>
         );

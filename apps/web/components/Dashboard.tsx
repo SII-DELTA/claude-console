@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef, useState } from "react";
 import type { ClaudeProject, ClaudeSession } from "@mac/shared";
 
 const RECENT_DONE_MS = 60 * 60 * 1000; // a "done" session newer than this is "awaiting next step"
@@ -72,27 +73,84 @@ function Tag({ children }: { children: React.ReactNode }) {
   return <span className="shrink-0 rounded bg-bg px-1.5 py-0.5 text-[10px] text-ink-dim">{children}</span>;
 }
 
-/* ── 需要你处理 卡片（整卡可点进会话）─────────────────────────────── */
-function AttentionCard({ s, kind, onOpen }: { s: ClaudeSession; kind: AttKind; onOpen: (id: string) => void }) {
+/* ── 需要你处理 卡片（点击进会话；右滑忽略）─────────────────────────── */
+const SWIPE_THRESHOLD = 90;
+function AttentionCard({
+  s,
+  kind,
+  onOpen,
+  onIgnore,
+}: {
+  s: ClaudeSession;
+  kind: AttKind;
+  onOpen: (id: string) => void;
+  onIgnore: (id: string) => void;
+}) {
   const a = ATT[kind];
+  const [dx, setDx] = useState(0);
+  const [dragging, setDragging] = useState(false);
+  const startX = useRef<number | null>(null);
+  const dxRef = useRef(0);
+  const moved = useRef(false);
+
+  function onTouchStart(e: React.TouchEvent) {
+    startX.current = e.touches[0]!.clientX;
+    moved.current = false;
+    setDragging(true);
+  }
+  function onTouchMove(e: React.TouchEvent) {
+    if (startX.current == null) return;
+    const d = e.touches[0]!.clientX - startX.current; // right-swipe → positive
+    if (Math.abs(d) > 6) moved.current = true;
+    dxRef.current = Math.max(0, d);
+    setDx(dxRef.current);
+  }
+  function onTouchEnd() {
+    setDragging(false);
+    startX.current = null;
+    if (dxRef.current > SWIPE_THRESHOLD) {
+      setDx(600); // slide out, then drop from the list
+      setTimeout(() => onIgnore(s.id), 160);
+    } else {
+      setDx(0);
+    }
+    dxRef.current = 0;
+  }
+
   return (
-    <button
-      onClick={() => onOpen(s.id)}
-      className={`w-full rounded-xl border border-line border-l-2 bg-bg-alt p-3 text-left transition-colors hover:bg-bg-raised ${a.accent}`}
-    >
-      <div className="flex items-start gap-3">
-        <div className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg ${a.tile}`}>{a.icon(18)}</div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="truncate text-[14px] font-medium text-ink">{s.title}</span>
-            <Tag>{projName(s.cwd)}</Tag>
-            <span className={`ml-auto shrink-0 whitespace-nowrap rounded-full px-1.5 py-0.5 text-[10px] font-medium ${a.badge}`}>{a.label}</span>
-            <span className="shrink-0 whitespace-nowrap text-[11px] text-ink-faint">{relTime(s.updatedAt)}</span>
+    <div className="relative overflow-hidden rounded-xl">
+      {/* revealed behind the card as it slides right */}
+      <div className="absolute inset-0 flex items-center gap-1.5 rounded-xl bg-bg-raised pl-4 text-[12px] font-medium text-ink-dim">
+        <svg viewBox="0 0 24 24" width="16" height="16" {...sw}>
+          <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+          <line x1="1" y1="1" x2="23" y2="23" />
+        </svg>
+        忽略
+      </div>
+      <div
+        onClick={() => {
+          if (!moved.current) onOpen(s.id);
+        }}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+        style={{ transform: `translateX(${dx}px)`, transition: dragging ? "none" : "transform .16s ease-out" }}
+        className={`relative rounded-xl border border-line border-l-2 bg-bg-alt p-3 text-left transition-colors hover:bg-bg-raised ${a.accent}`}
+      >
+        <div className="flex items-start gap-3">
+          <div className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg ${a.tile}`}>{a.icon(18)}</div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className="truncate text-[14px] font-medium text-ink">{s.title}</span>
+              <Tag>{projName(s.cwd)}</Tag>
+              <span className={`ml-auto shrink-0 whitespace-nowrap rounded-full px-1.5 py-0.5 text-[10px] font-medium ${a.badge}`}>{a.label}</span>
+              <span className="shrink-0 whitespace-nowrap text-[11px] text-ink-faint">{relTime(s.updatedAt)}</span>
+            </div>
+            {s.preview && <p className="mt-1 line-clamp-2 text-[12px] text-ink-dim">{s.preview}</p>}
           </div>
-          {s.preview && <p className="mt-1 line-clamp-2 text-[12px] text-ink-dim">{s.preview}</p>}
         </div>
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -164,14 +222,26 @@ export function Dashboard({
   onOpen,
   onSwitchProject,
   onShowAll,
+  onIgnore,
 }: {
   sessions: ClaudeSession[];
   projects: ClaudeProject[];
   onOpen: (id: string) => void;
   onSwitchProject: (dir: string) => void;
   onShowAll: () => void;
+  /** swipe-to-ignore an attention card (e.g. dismiss the pending question) */
+  onIgnore: (id: string) => void;
 }) {
+  // locally-hidden cards (swiped away this session) — instant removal on top of the
+  // backend dismiss, so the card disappears even for kinds with no server-side dismiss.
+  const [ignored, setIgnored] = useState<Set<string>>(new Set());
+  function ignore(id: string) {
+    setIgnored((prev) => new Set(prev).add(id));
+    onIgnore(id);
+  }
+
   const attentionOf = (s: ClaudeSession): AttKind | null => {
+    if (ignored.has(s.id)) return null;
     if (s.attention === "question") return "question";
     if (s.attention === "error") return "error";
     if (s.attention === "done" && !s.isLive && ageMs(s.updatedAt) < RECENT_DONE_MS) return "done";
@@ -202,7 +272,7 @@ export function Dashboard({
           <SectionHead title="需要你处理" count={needs.length} color="text-accent" />
           <div className="space-y-2.5">
             {needs.map(({ s, k }) => (
-              <AttentionCard key={s.id} s={s} kind={k} onOpen={onOpen} />
+              <AttentionCard key={s.id} s={s} kind={k} onOpen={onOpen} onIgnore={ignore} />
             ))}
           </div>
         </section>
