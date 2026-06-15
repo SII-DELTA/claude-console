@@ -128,6 +128,23 @@ function Console() {
   // reset the takeover arm whenever the selected session changes
   useEffect(() => setTakeoverArmed(false), [selectedId]);
 
+  // Pin layout to the real visible height. iOS Safari's `dvh` lags behind the
+  // dynamic toolbar (bottom bar drifts / needs a pull to settle), so drive the
+  // height off window.innerHeight and update on resize/visualViewport changes.
+  useEffect(() => {
+    const setH = () =>
+      document.documentElement.style.setProperty("--app-height", `${window.innerHeight}px`);
+    setH();
+    window.addEventListener("resize", setH);
+    window.addEventListener("orientationchange", setH);
+    window.visualViewport?.addEventListener("resize", setH);
+    return () => {
+      window.removeEventListener("resize", setH);
+      window.removeEventListener("orientationchange", setH);
+      window.visualViewport?.removeEventListener("resize", setH);
+    };
+  }, []);
+
   // connect the WS on mount when restoring a persisted connection
   useEffect(() => {
     if (!ws) connectWs();
@@ -224,7 +241,10 @@ function Console() {
   }
 
   return (
-    <div className="flex h-dvh overflow-hidden bg-bg text-ink flex-col md:flex-row">
+    <div
+      className="flex overflow-hidden bg-bg text-ink flex-col md:flex-row"
+      style={{ height: "var(--app-height, 100dvh)" }}
+    >
       {/* Sidebar (desktop) / Drawer (mobile) */}
       <aside className="hidden w-72 shrink-0 border-r border-line bg-bg-alt md:block">
         <Brand

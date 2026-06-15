@@ -16,6 +16,10 @@
 - 由表头统一提供顶部安全区后，移除 Dashboard/Settings 各自的 `pt-safe`。
 - `Brand` 拆出可复用的 `ProjectPicker`：桌面侧栏仍用 `Brand`；移动 Sessions 页用 `ProjectPicker`（不再重复标题/安全区）。
 
+## 追加 2：底部高度 + usage 显示
+- **底部留空 / 需下拉**：`h-dvh` 在 iOS Safari 浏览器下随地址栏动态变化不及时（底部 Tab 漂移）。改为 JS 把 `window.innerHeight` 写入 `--app-height`（随 resize/visualViewport/orientationchange 更新），根容器 `height: var(--app-height,100dvh)`。
+- **usage 余量不显示**：`useUsage` 守卫 `!connection.token` 把开放模式的空 token(`""`) 误判为未连接而不拉取；改为 `connection.token == null` 才跳过（`/usage` 为免鉴权路径，空 token 可取）。
+
 ## 验证
 - `pnpm --filter @mac/web typecheck` 通过；web 测试 18 全绿。
 - 监控台视觉重设计（image2）另行进行。

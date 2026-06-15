@@ -16,7 +16,9 @@ export function useUsage() {
   const connection = useAppStore((s) => s.connection);
 
   useEffect(() => {
-    if (!connection?.url || !connection?.token) {
+    // token may legitimately be "" in open/no-auth mode; /usage is a free path,
+    // so fetch as long as we have a url and a defined (possibly empty) token.
+    if (!connection?.url || connection.token == null) {
       setUsage(null);
       return;
     }
