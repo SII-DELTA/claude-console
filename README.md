@@ -2,7 +2,7 @@
 
 > 免代理、可个性化的 **Claude Code** 远程客户端——浏览器直连接管你电脑上的 AI 编程会话。
 
-![Claude Console](claude-console.png)
+![Claude Console](claude-console.jpg)
 
 一个由 **本地 Agent 服务 + Web 控制台（PWA）** 组成的纯网页方案。后端跑在你的 Mac 上，
 读取 `~/.claude/projects` 的会话、用 `claude` CLI 驱动；手机/电脑浏览器经 **Tailscale** 直连，
@@ -10,7 +10,7 @@
 
 ## 架构总览
 
-![架构总览](architecture.png)
+![架构总览](architecture.jpg)
 
 * **@mac/shared** — Zod schemas + 类型（ClaudeSession / ClaudeMessage / WS 协议），单一真相来源。
 * **@mac/local-agent** — Fastify + `ws` + SQLite 本地服务（默认 `127.0.0.1:7345`，可 `MAC_AGENT_BIND` 暴露到 Tailscale）。
