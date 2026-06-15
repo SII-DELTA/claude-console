@@ -132,23 +132,6 @@ function Console() {
   // reset the takeover arm whenever the selected session changes
   useEffect(() => setTakeoverArmed(false), [selectedId]);
 
-  // Drive the shell height off window.innerHeight (read in JS), not the CSS `dvh`
-  // unit. On iOS `100dvh` resolves wrong on first paint and only settles after a
-  // scroll ("需要拉一下才正常"); innerHeight is correct immediately on mount/resize.
-  useEffect(() => {
-    const setH = () =>
-      document.documentElement.style.setProperty("--app-height", `${window.innerHeight}px`);
-    setH();
-    window.addEventListener("resize", setH);
-    window.addEventListener("orientationchange", setH);
-    window.visualViewport?.addEventListener("resize", setH);
-    return () => {
-      window.removeEventListener("resize", setH);
-      window.removeEventListener("orientationchange", setH);
-      window.visualViewport?.removeEventListener("resize", setH);
-    };
-  }, []);
-
   // connect the WS on mount when restoring a persisted connection
   useEffect(() => {
     if (!ws) connectWs();
@@ -250,10 +233,7 @@ function Console() {
   }
 
   return (
-    <div
-      className="flex overflow-hidden bg-bg text-ink flex-col md:flex-row"
-      style={{ height: "var(--app-height, 100dvh)" }}
-    >
+    <div className="flex h-screen overflow-hidden bg-bg text-ink flex-col md:flex-row">
       {/* Sidebar (desktop) / Drawer (mobile) */}
       <aside className="hidden w-72 shrink-0 border-r border-line bg-bg-alt md:block">
         <Brand
