@@ -41,6 +41,8 @@ export class ClaudeStore {
   private activeDir: string | null = null;
   /** predicate injected by the runtime: is this session driven by our agent? */
   private drivenPredicate: ((id: string) => boolean) | null = null;
+  /** AskUserQuestion ids the user dismissed → excluded from the "question" attention */
+  private dismissedQuestions = new Set<string>();
 
   constructor(
     private workspaceRoot: string,
@@ -61,6 +63,32 @@ export class ClaudeStore {
   /** Lets the runtime tell us which sessions our own driver currently owns. */
   setDrivenPredicate(fn: (id: string) => boolean): void {
     this.drivenPredicate = fn;
+  }
+
+  /** Seed the dismissed-question set (from durable storage at startup). */
+  setDismissedQuestions(ids: Iterable<string>): void {
+    this.dismissedQuestions = new Set(ids);
+  }
+
+  /** Mark question ids as dismissed so they stop counting toward "question" attention. */
+  addDismissedQuestions(ids: string[]): void {
+    for (const id of ids) this.dismissedQuestions.add(id);
+  }
+
+  /** Current open (unanswered) AskUserQuestion ids for a session. */
+  async getOpenQuestionIds(id: string): Promise<string[]> {
+    if (!SAFE_ID.test(id)) return [];
+    const file = this.sessionFile(id);
+    if (!existsSync(file)) return [];
+    const acc = await this.foldFile(file, false);
+    return [...acc.openQuestionIds];
+  }
+
+  /** Re-read a session's meta and broadcast it (e.g. after a dismiss). */
+  async refreshSession(id: string): Promise<void> {
+    if (!SAFE_ID.test(id)) return;
+    const meta = await this.readSessionMeta(this.sessionFile(id));
+    if (meta) this.bus?.emit("claude:session_updated", meta);
   }
 
   /** cwd used as the default for new sessions in the active project. */
@@ -223,7 +251,7 @@ export class ClaudeStore {
       isLive,
       drivenByAgent: this.drivenPredicate?.(id) ?? false,
       preview: acc.firstUserText?.slice(0, 140),
-      attention: deriveAttention(acc, isLive),
+      attention: deriveAttention(acc, isLive, this.dismissedQuestions),
     };
   }
 

@@ -124,6 +124,14 @@ describe("deriveAttention", () => {
     expect(deriveAttention(acc, false)).toBe("done");
   });
 
+  it("skips dismissed question ids (no longer 'question')", () => {
+    const acc = fold([userMsg("hi"), askMsg("q1")]);
+    expect(deriveAttention(acc, false, new Set(["q1"]))).not.toBe("question");
+    // an un-dismissed open question still flags
+    const acc2 = fold([userMsg("hi"), askMsg("q1"), askMsg("q2")]);
+    expect(deriveAttention(acc2, false, new Set(["q1"]))).toBe("question");
+  });
+
   it("flags a finished, non-live conversation as 'done'", () => {
     const acc = fold([userMsg("hi"), textReply("here you go")]);
     expect(deriveAttention(acc, false)).toBe("done");

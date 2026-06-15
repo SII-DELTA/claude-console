@@ -69,6 +69,7 @@ function Console() {
     sendPrompt,
     interrupt,
     answerPermission,
+    dismissQuestion,
     pendingPermission,
     loadSessions,
     setConnection,
@@ -217,9 +218,9 @@ function Console() {
     pendingPermission && pendingPermission.sessionId === selectedId ? pendingPermission : null;
   // 方案 A fallback: a headlessly-failed AskUserQuestion re-rendered from history.
   // Suppressed when B is active to avoid a duplicate picker.
-  const pendingQuestions = bPermission
-    ? null
-    : driveStatus === "streaming"
+  // Gated on the server-derived attention so a dismissed question hides the picker too.
+  const pendingQuestions =
+    bPermission || driveStatus === "streaming" || selected?.attention !== "question"
       ? null
       : findPendingQuestions(messages);
 
@@ -471,10 +472,20 @@ function Console() {
         )}
 
         {pendingQuestions && !composerLocked && (
-          <QuestionPanel
-            questions={pendingQuestions}
-            onSubmit={(answer) => void sendPrompt(answer, externalLive ? { force: true } : undefined)}
-          />
+          <div>
+            <QuestionPanel
+              questions={pendingQuestions}
+              onSubmit={(answer) => void sendPrompt(answer, externalLive ? { force: true } : undefined)}
+            />
+            <div className="mx-auto mb-1 max-w-3xl px-1 text-right">
+              <button
+                onClick={() => selectedId && void dismissQuestion(selectedId)}
+                className="text-[11px] text-ink-faint underline-offset-2 hover:text-ink-dim hover:underline"
+              >
+                忽略此提问
+              </button>
+            </div>
+          </div>
         )}
 
 

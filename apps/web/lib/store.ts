@@ -141,6 +141,8 @@ interface AppState {
   answerPermission: (answers: Record<string, string | string[]>) => Promise<void>;
   /** Pull any pending interactive permission for a session (recover after reload/restart). */
   refreshPendingPermission: (sessionId: string) => Promise<void>;
+  /** Dismiss a session's lingering question(s) without answering (clears the badge). */
+  dismissQuestion: (sessionId: string) => Promise<void>;
   /** Surface a user-facing error in the global dismissable Toast. */
   setError: (msg: string) => void;
   clearError: () => void;
@@ -476,6 +478,24 @@ export const useAppStore = create<AppState>((set, get) => ({
       } else {
         set({ pendingPermission: p, error: "提交选择失败，请重试" });
       }
+    }
+  },
+
+  async dismissQuestion(sessionId) {
+    const api = get().api;
+    if (!api || !sessionId) return;
+    // optimistic: drop the local picker and clear the question badge
+    set((s) => ({
+      pendingPermission:
+        s.pendingPermission?.sessionId === sessionId ? null : s.pendingPermission,
+      sessions: s.sessions.map((x) =>
+        x.id === sessionId && x.attention === "question" ? { ...x, attention: undefined } : x,
+      ),
+    }));
+    try {
+      await api.dismissClaudeQuestion(sessionId);
+    } catch {
+      /* best-effort; the server's session_updated broadcast reconciles state */
     }
   },
 

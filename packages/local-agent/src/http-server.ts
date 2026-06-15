@@ -343,6 +343,22 @@ export async function buildHttpApp(opts: BuildHttpOptions): Promise<FastifyInsta
     },
   );
 
+  // Dismiss a session's lingering AskUserQuestion(s) without answering — clears the
+  // "needs answer" attention badge (e.g. a question abandoned in a closed terminal).
+  app.post<{ Params: { id: string } }>(
+    "/claude/sessions/:id/dismiss-question",
+    async (req) => {
+      const id = req.params.id;
+      const ids = await opts.claude.getOpenQuestionIds(id);
+      if (ids.length > 0) {
+        opts.store.dismissQuestions(id, ids, new Date().toISOString());
+        opts.claude.addDismissedQuestions(ids);
+        await opts.claude.refreshSession(id);
+      }
+      return { ok: true, dismissed: ids.length };
+    },
+  );
+
   app.post<{ Params: { id: string } }>("/claude/sessions/:id/prewarm", async (req) => {
     const warmed = await opts.driver.prewarm(req.params.id);
     return { warmed };

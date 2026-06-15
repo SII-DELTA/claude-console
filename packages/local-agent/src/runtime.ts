@@ -76,6 +76,8 @@ export async function startAgent(config: AgentRuntimeConfig): Promise<AgentRunti
   });
   // let session metadata report which live sessions our own driver owns
   claude.setDrivenPredicate((id) => driver.owns(id));
+  // restore dismissed questions so they stay cleared across restarts
+  claude.setDismissedQuestions(store.listDismissedQuestionIds());
   const password = config.password ?? process.env.MAC_AGENT_PASSWORD;
   const auth = new AuthManager(store, bus, { password });
   const sessions = new SessionManager(store, bus, {

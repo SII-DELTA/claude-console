@@ -230,8 +230,13 @@ export function accumulate(acc: SessionAccumulator, parsed: ParsedLine, keepMess
 export function deriveAttention(
   acc: SessionAccumulator,
   isLive: boolean,
+  dismissed?: Set<string>,
 ): "question" | "error" | "done" | undefined {
-  if (acc.openQuestionIds.size > 0) return "question";
+  // an unanswered question still counts unless the user explicitly dismissed it
+  const open = dismissed
+    ? [...acc.openQuestionIds].some((id) => !dismissed.has(id))
+    : acc.openQuestionIds.size > 0;
+  if (open) return "question";
   if (!isLive && acc.lastRole === "assistant") return "done";
   return undefined;
 }

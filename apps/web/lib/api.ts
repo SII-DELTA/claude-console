@@ -169,6 +169,11 @@ export class ApiClient {
     return this.request("GET", `/claude/sessions/${id}/pending-permission`);
   }
 
+  /** Dismiss a session's lingering question(s) without answering (clears the badge). */
+  dismissClaudeQuestion(id: string): Promise<{ ok: true; dismissed: number }> {
+    return this.request("POST", `/claude/sessions/${id}/dismiss-question`);
+  }
+
   /** Answer a pending interactive permission (AskUserQuestion, 方案 B). */
   answerClaudePermission(
     id: string,

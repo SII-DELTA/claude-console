@@ -143,4 +143,11 @@ describe("HistoryStore", () => {
     expect(store.listPendingPermissions("s1")).toHaveLength(0);
     expect(store.listPendingPermissions("s2")).toHaveLength(1); // other session untouched
   });
+
+  it("records dismissed question ids (idempotent)", () => {
+    const store = new HistoryStore(":memory:");
+    store.dismissQuestions("s1", ["q1", "q2"], ISO(1));
+    store.dismissQuestions("s1", ["q2", "q3"], ISO(2)); // q2 repeats — ignored
+    expect(new Set(store.listDismissedQuestionIds())).toEqual(new Set(["q1", "q2", "q3"]));
+  });
 });

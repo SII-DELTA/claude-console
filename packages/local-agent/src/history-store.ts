@@ -147,6 +147,12 @@ export class HistoryStore {
         createdAt TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_pending_session ON pending_permissions(sessionId);
+
+      CREATE TABLE IF NOT EXISTS dismissed_questions (
+        questionId TEXT PRIMARY KEY,
+        sessionId TEXT NOT NULL,
+        dismissedAt TEXT NOT NULL
+      );
     `);
   }
 
@@ -378,6 +384,28 @@ export class HistoryStore {
       .prepare(`SELECT * FROM pending_permissions WHERE sessionId=? ORDER BY createdAt ASC`)
       .all(sessionId) as RawPendingRow[];
     return rows.map((r) => this.rowToPending(r));
+  }
+
+  /* ---------------- dismissed questions (忽略遗留提问) ---------------- */
+
+  /** Mark AskUserQuestion ids as dismissed so they no longer count as "needs answer". */
+  dismissQuestions(sessionId: string, questionIds: string[], dismissedAt: string): void {
+    const stmt = this.db.prepare(
+      `INSERT INTO dismissed_questions (questionId,sessionId,dismissedAt)
+       VALUES (?,?,?) ON CONFLICT(questionId) DO NOTHING`,
+    );
+    const tx = this.db.transaction((ids: string[]) => {
+      for (const id of ids) stmt.run(id, sessionId, dismissedAt);
+    });
+    tx(questionIds);
+  }
+
+  /** All dismissed question ids (loaded once into memory for fast attention checks). */
+  listDismissedQuestionIds(): string[] {
+    const rows = this.db.prepare(`SELECT questionId FROM dismissed_questions`).all() as {
+      questionId: string;
+    }[];
+    return rows.map((r) => r.questionId);
   }
 
   private rowToPending(r: RawPendingRow): PendingPermissionRecord {
