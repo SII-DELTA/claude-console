@@ -82,9 +82,11 @@ tailscale serve --bg --https=8443 localhost:7345   # agent→ https://<host>.<ta
 tailscale serve status                              # 查看；tailscale serve reset 清空
 
 # 2) 手机浏览器开 https://<host>.<tailnet>.ts.net （HTTPS → 麦克风可用）
-#    「服务器地址」填 https://<host>.<tailnet>.ts.net:8443
+#    在 *.ts.net 下「服务器地址」会自动填同主机的 :8443，无需手动输入
 ```
 
+> 自动识别：页面跑在 `https://*.ts.net` 时，前端默认把 agent 地址设为同主机 `:8443`
+> （对应上面的 serve 端口）；用别的端口或同源 `/agent` 方案时手动改即可。
 > 用两个 HTTPS 端口是为避免「HTTPS 页面连 http agent」的混合内容拦截；两端皆 HTTPS，WS
 > 自动走 `wss://…:8443/ws`，无跨域（agent 默认 `CORS=*`）。配 serve 后 agent 保持默认绑
 > `127.0.0.1` 即可（serve 在本机代理）。同源 `/agent` 方案见 [docs/remote-access.md](docs/remote-access.md)。

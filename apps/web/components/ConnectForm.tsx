@@ -5,16 +5,22 @@ import { ApiClient } from "../lib/api";
 import { useAppStore } from "../lib/store";
 import { ClaudeLogo } from "./ClaudeLogo";
 
+// Agent's HTTPS port when fronted by `tailscale serve --https=8443 localhost:7345`.
+const TS_AGENT_HTTPS_PORT = "8443";
+
 /**
  * Guess the agent address from how the page is being served:
- * - localhost            → the local agent on :7345
- * - served on :3005      → two-port setup, agent on the same host :7345
- * - served via a proxy   → single-origin setup, agent under <origin>/agent
+ * - localhost                → the local agent on :7345
+ * - https on a *.ts.net host  → tailscale serve: agent on the same host :8443
+ * - served on :3005          → two-port setup, agent on the same host :7345
+ * - served via a proxy       → single-origin setup, agent under <origin>/agent
  */
 function defaultAgentUrl(): string {
   if (typeof window === "undefined") return "http://127.0.0.1:7345";
   const { hostname, protocol, port, origin } = window.location;
   if (hostname === "localhost" || hostname === "127.0.0.1") return "http://127.0.0.1:7345";
+  // Tailscale serve puts web on https/443 at <host>.ts.net and the agent on a 2nd https port.
+  if (protocol === "https:" && hostname.endsWith(".ts.net")) return `https://${hostname}:${TS_AGENT_HTTPS_PORT}`;
   if (port === "3005") return `${protocol}//${hostname}:7345`;
   return `${origin}/agent`;
 }
