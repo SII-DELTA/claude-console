@@ -89,7 +89,7 @@ export function Dashboard({
 
   if (sessions.length === 0) {
     return (
-      <div className="flex h-full flex-col items-center justify-center px-6 pt-safe text-center">
+      <div className="flex h-full flex-col items-center justify-center px-6 text-center">
         <p className="text-sm text-ink-dim">还没有会话</p>
         <p className="mt-1 text-xs text-ink-faint">在 Sessions 页用「+」开启一个新会话</p>
       </div>
@@ -97,7 +97,7 @@ export function Dashboard({
   }
 
   return (
-    <div className="h-full overflow-y-auto overscroll-contain px-4 pb-4 pt-safe scroll-thin">
+    <div className="h-full overflow-y-auto overscroll-contain px-4 py-4 scroll-thin">
       <Group title="🔴 待你处理" tone="text-accent" sessions={needAttention} onOpen={onOpen} />
       <Group title="🟢 运行中" tone="text-success" sessions={running} onOpen={onOpen} />
       <Group title="🕘 最近" tone="text-ink-dim" sessions={recent} onOpen={onOpen} />

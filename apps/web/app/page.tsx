@@ -245,20 +245,24 @@ function Console() {
         </div>
       </aside>
 
-      {/* Mobile home: bottom-tab views (dashboard / sessions / settings) */}
+      {/* Mobile home: shared header + bottom-tab views (dashboard / sessions / settings) */}
       {!mobileDetail && (
         <div className="flex min-h-0 flex-1 flex-col md:hidden">
+          <HomeHeader
+            title={mobileTab === "dashboard" ? "监控台" : mobileTab === "sessions" ? "Sessions" : "Settings"}
+            wsConnected={wsConnected}
+            onRefresh={() => void loadSessions()}
+          />
           <div className="min-h-0 flex-1">
             {mobileTab === "dashboard" && (
               <Dashboard sessions={sessions} onOpen={selectAndClose} onShowAll={() => setMobileTab("sessions")} />
             )}
             {mobileTab === "sessions" && (
               <div className="flex h-full flex-col">
-                <Brand
+                <ProjectPicker
                   projects={projects}
                   activeProjectDir={activeProjectDir}
                   fallbackName={connection?.workspaceName}
-                  wsConnected={wsConnected}
                   onSwitch={(dir) => void switchProject(dir)}
                 />
                 <div className="min-h-0 flex-1">
@@ -478,6 +482,36 @@ function Console() {
   );
 }
 
+// Shared mobile home header — usage 余量 + connection dot + refresh, on every tab.
+function HomeHeader({
+  title,
+  wsConnected,
+  onRefresh,
+}: {
+  title: string;
+  wsConnected: boolean;
+  onRefresh: () => void;
+}) {
+  return (
+    <header className="flex shrink-0 items-center gap-2 border-b border-line bg-bg-alt px-3 py-2 pt-safe">
+      <ClaudeLogo size={18} className="text-[#D97757]" />
+      <span className="text-sm font-semibold text-ink">{title}</span>
+      <div className="ml-auto flex items-center gap-2">
+        <UsageDisplay />
+        <ConnDot ok={wsConnected} />
+        <button
+          onClick={onRefresh}
+          aria-label="刷新"
+          title="刷新"
+          className="flex h-8 w-8 items-center justify-center rounded-md border border-line text-base transition-colors hover:bg-bg-raised"
+        >
+          ⟳
+        </button>
+      </div>
+    </header>
+  );
+}
+
 function Brand({
   projects,
   activeProjectDir,
@@ -491,16 +525,39 @@ function Brand({
   wsConnected: boolean;
   onSwitch: (dir: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const active = projects.find((p) => p.dir === activeProjectDir);
-  const activeName = active?.name ?? fallbackName ?? "项目";
   return (
-    <div className="relative border-b border-line">
+    <div>
       <div className="flex h-13 items-center gap-2 px-4 py-3 pt-safe">
         <ClaudeLogo size={18} className="text-[#D97757]" />
         <span className="text-sm font-semibold text-ink">Claude Console</span>
         <ConnDot ok={wsConnected} />
       </div>
+      <ProjectPicker
+        projects={projects}
+        activeProjectDir={activeProjectDir}
+        fallbackName={fallbackName}
+        onSwitch={onSwitch}
+      />
+    </div>
+  );
+}
+
+function ProjectPicker({
+  projects,
+  activeProjectDir,
+  fallbackName,
+  onSwitch,
+}: {
+  projects: ClaudeProject[];
+  activeProjectDir: string | null;
+  fallbackName?: string;
+  onSwitch: (dir: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const active = projects.find((p) => p.dir === activeProjectDir);
+  const activeName = active?.name ?? fallbackName ?? "项目";
+  return (
+    <div className="relative border-b border-line">
       <button
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-center gap-2 border-t border-line/60 px-4 py-2.5 text-left text-[13px] hover:bg-bg-raised"

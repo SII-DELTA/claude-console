@@ -26,7 +26,7 @@ export function SettingsPage({
   onDisconnect: () => void;
 }) {
   return (
-    <div className="h-full overflow-y-auto overscroll-contain px-4 pb-4 pt-safe scroll-thin">
+    <div className="h-full overflow-y-auto overscroll-contain px-4 py-4 scroll-thin">
       <section className="mb-5">
         <h2 className="mb-2 text-[12px] font-semibold text-ink-dim">连接</h2>
         <div className="space-y-2 rounded-xl border border-line bg-bg-alt p-3 text-[13px]">
