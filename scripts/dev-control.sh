@@ -88,7 +88,9 @@ start_agent() {
     cd "$ROOT_DIR"
     pnpm --filter @mac/shared build
   )
-  run_detached "$AGENT_LABEL" "$AGENT_SCREEN" "$ROOT_DIR/packages/local-agent" "$LOG_DIR/local-agent.log" "env MAC_AGENT_NO_AUTH=1 MAC_AGENT_BIND=0.0.0.0 ./node_modules/.bin/tsx src/cli.ts --port $AGENT_PORT --workspace ../.."
+  # Bind / auth come from the root .env (MAC_AGENT_BIND, MAC_AGENT_PASSWORD).
+  # Default bind is 127.0.0.1 — correct when fronted by `tailscale serve`.
+  run_detached "$AGENT_LABEL" "$AGENT_SCREEN" "$ROOT_DIR/packages/local-agent" "$LOG_DIR/local-agent.log" "./node_modules/.bin/tsx src/cli.ts --port $AGENT_PORT --workspace ../.."
   wait_for_http "http://127.0.0.1:$AGENT_PORT/health" "local-agent" "$LOG_DIR/local-agent.log"
 }
 
