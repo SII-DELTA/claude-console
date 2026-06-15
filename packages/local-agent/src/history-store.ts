@@ -52,6 +52,24 @@ export interface DeviceRecord extends PairedDevice {
   tokenHash: string;
 }
 
+/** A durable record of an AskUserQuestion awaiting the user's answer. */
+export interface PendingPermissionRecord {
+  requestId: string;
+  sessionId: string;
+  toolName: string;
+  /** JSON-serializable questions payload (ClaudePermissionQuestion[]). */
+  questions: unknown;
+  createdAt: string;
+}
+
+interface RawPendingRow {
+  requestId: string;
+  sessionId: string;
+  toolName: string;
+  questions: string;
+  createdAt: string;
+}
+
 export class HistoryStore {
   private db: DB;
 
@@ -120,6 +138,15 @@ export class HistoryStore {
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS pending_permissions (
+        requestId TEXT PRIMARY KEY,
+        sessionId TEXT NOT NULL,
+        toolName TEXT NOT NULL,
+        questions TEXT NOT NULL,
+        createdAt TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_pending_session ON pending_permissions(sessionId);
     `);
   }
 
@@ -317,7 +344,61 @@ export class HistoryStore {
     };
   }
 
+  /* ---------------- pending permissions (AskUserQuestion 接管) ---------------- */
+
+  savePendingPermission(rec: PendingPermissionRecord): void {
+    this.db
+      .prepare(
+        `INSERT INTO pending_permissions (requestId,sessionId,toolName,questions,createdAt)
+         VALUES (@requestId,@sessionId,@toolName,@questions,@createdAt)
+         ON CONFLICT(requestId) DO UPDATE SET
+           sessionId=excluded.sessionId, toolName=excluded.toolName,
+           questions=excluded.questions, createdAt=excluded.createdAt`,
+      )
+      .run({ ...rec, questions: JSON.stringify(rec.questions) });
+  }
+
+  deletePendingPermission(requestId: string): void {
+    this.db.prepare(`DELETE FROM pending_permissions WHERE requestId=?`).run(requestId);
+  }
+
+  deletePendingPermissionsBySession(sessionId: string): void {
+    this.db.prepare(`DELETE FROM pending_permissions WHERE sessionId=?`).run(sessionId);
+  }
+
+  getPendingPermission(requestId: string): PendingPermissionRecord | null {
+    const row = this.db
+      .prepare(`SELECT * FROM pending_permissions WHERE requestId=?`)
+      .get(requestId) as RawPendingRow | undefined;
+    return row ? this.rowToPending(row) : null;
+  }
+
+  listPendingPermissions(sessionId: string): PendingPermissionRecord[] {
+    const rows = this.db
+      .prepare(`SELECT * FROM pending_permissions WHERE sessionId=? ORDER BY createdAt ASC`)
+      .all(sessionId) as RawPendingRow[];
+    return rows.map((r) => this.rowToPending(r));
+  }
+
+  private rowToPending(r: RawPendingRow): PendingPermissionRecord {
+    return {
+      requestId: r.requestId,
+      sessionId: r.sessionId,
+      toolName: r.toolName,
+      questions: safeParse(r.questions),
+      createdAt: r.createdAt,
+    };
+  }
+
   close(): void {
     this.db.close();
+  }
+}
+
+function safeParse(s: string): unknown {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
   }
 }

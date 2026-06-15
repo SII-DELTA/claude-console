@@ -106,4 +106,41 @@ describe("HistoryStore", () => {
     store.revokeDevice("d1");
     expect(store.findDeviceByTokenHash("h1")).toBeNull();
   });
+
+  it("persists, lists and deletes pending permissions", () => {
+    const store = new HistoryStore(":memory:");
+    const questions = [{ question: "Pick?", header: "H", multiSelect: false, options: [{ label: "A" }] }];
+    store.savePendingPermission({
+      requestId: "r1",
+      sessionId: "s1",
+      toolName: "AskUserQuestion",
+      questions,
+      createdAt: ISO(1),
+    });
+    store.savePendingPermission({
+      requestId: "r2",
+      sessionId: "s1",
+      toolName: "AskUserQuestion",
+      questions,
+      createdAt: ISO(2),
+    });
+    store.savePendingPermission({
+      requestId: "r3",
+      sessionId: "s2",
+      toolName: "AskUserQuestion",
+      questions,
+      createdAt: ISO(3),
+    });
+
+    expect(store.listPendingPermissions("s1").map((p) => p.requestId)).toEqual(["r1", "r2"]);
+    expect(store.getPendingPermission("r1")?.questions).toEqual(questions);
+
+    store.deletePendingPermission("r1");
+    expect(store.getPendingPermission("r1")).toBeNull();
+    expect(store.listPendingPermissions("s1").map((p) => p.requestId)).toEqual(["r2"]);
+
+    store.deletePendingPermissionsBySession("s1");
+    expect(store.listPendingPermissions("s1")).toHaveLength(0);
+    expect(store.listPendingPermissions("s2")).toHaveLength(1); // other session untouched
+  });
 });

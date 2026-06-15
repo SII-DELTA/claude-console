@@ -311,11 +311,19 @@ export async function buildHttpApp(opts: BuildHttpOptions): Promise<FastifyInsta
         reply.code(400);
         return { error: "bad_request", code: ERROR_CODES.BAD_REQUEST, issues: parsed.error.issues };
       }
-      const ok = opts.driver.answerPermission(
+      // live (in-process) first; fall back to durable recovery (resume) if needed
+      let ok = opts.driver.answerPermission(
         req.params.id,
         parsed.data.requestId,
         parsed.data.answers,
       );
+      if (!ok) {
+        ok = await opts.driver.recoverAnswerPermission(
+          req.params.id,
+          parsed.data.requestId,
+          parsed.data.answers,
+        );
+      }
       if (!ok) {
         reply.code(409);
         return {
@@ -325,6 +333,13 @@ export async function buildHttpApp(opts: BuildHttpOptions): Promise<FastifyInsta
         };
       }
       return { ok: true };
+    },
+  );
+
+  app.get<{ Params: { id: string } }>(
+    "/claude/sessions/:id/pending-permission",
+    async (req) => {
+      return { pending: opts.driver.listPending(req.params.id) };
     },
   );
 

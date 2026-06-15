@@ -450,16 +450,23 @@ function Console() {
         {error && !liveConflict && <Toast message={error} onClose={clearError} />}
 
         {bPermission && (
-          <QuestionPanel
-            questions={bPermission.questions}
-            onSubmit={(_text, structured) => {
-              const answers: Record<string, string | string[]> = {};
-              for (const a of structured) {
-                answers[a.question] = a.multiSelect ? a.labels : (a.labels[0] ?? "");
-              }
-              void answerPermission(answers);
-            }}
-          />
+          <div>
+            {bPermission.live === false && (
+              <p className="mx-auto mb-1 max-w-3xl px-1 text-[11px] text-ink-faint">
+                这是之前挂起的问题，回答后会恢复该会话继续。
+              </p>
+            )}
+            <QuestionPanel
+              questions={bPermission.questions}
+              onSubmit={(_text, structured) => {
+                const answers: Record<string, string | string[]> = {};
+                for (const a of structured) {
+                  answers[a.question] = a.multiSelect ? a.labels : (a.labels[0] ?? "");
+                }
+                void answerPermission(answers);
+              }}
+            />
+          </div>
         )}
 
         {pendingQuestions && !composerLocked && (

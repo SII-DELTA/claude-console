@@ -287,6 +287,23 @@ export const ClaudePermissionQuestionSchema = z.object({
 });
 export type ClaudePermissionQuestion = z.infer<typeof ClaudePermissionQuestionSchema>;
 
+/** A recoverable pending permission (AskUserQuestion) for a session. */
+export const ClaudePendingPermissionSchema = z.object({
+  requestId: z.string(),
+  toolName: z.string(),
+  questions: z.array(ClaudePermissionQuestionSchema),
+  /** true: still answerable in-process; false: only persisted (needs resume to answer). */
+  live: z.boolean(),
+});
+export type ClaudePendingPermission = z.infer<typeof ClaudePendingPermissionSchema>;
+
+export const ClaudePendingPermissionsResponseSchema = z.object({
+  pending: z.array(ClaudePendingPermissionSchema),
+});
+export type ClaudePendingPermissionsResponse = z.infer<
+  typeof ClaudePendingPermissionsResponseSchema
+>;
+
 /** Body for answering a pending interactive permission (AskUserQuestion). */
 export const ClaudeAnswerPermissionBodySchema = z.object({
   requestId: z.string().min(1),

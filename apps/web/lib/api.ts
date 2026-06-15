@@ -2,6 +2,7 @@ import type {
   AgentSession,
   ClaudeImage,
   ClaudeMessage,
+  ClaudePendingPermission,
   ClaudePermissionMode,
   ClaudeProject,
   ClaudeSession,
@@ -159,6 +160,13 @@ export class ApiClient {
 
   interruptClaudeSession(id: string): Promise<{ ok: true }> {
     return this.request("POST", `/claude/sessions/${id}/interrupt`);
+  }
+
+  /** Recover pending interactive permissions for a session (survives reload/restart). */
+  getClaudePendingPermission(
+    id: string,
+  ): Promise<{ pending: ClaudePendingPermission[] }> {
+    return this.request("GET", `/claude/sessions/${id}/pending-permission`);
   }
 
   /** Answer a pending interactive permission (AskUserQuestion, 方案 B). */

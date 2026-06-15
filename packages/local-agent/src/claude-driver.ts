@@ -12,6 +12,41 @@ export class SessionLiveError extends Error {
   }
 }
 
+/** Durable store for pending AskUserQuestion asks (so they survive restart). */
+export interface PendingPermissionStore {
+  savePendingPermission(rec: {
+    requestId: string;
+    sessionId: string;
+    toolName: string;
+    questions: unknown;
+    createdAt: string;
+  }): void;
+  deletePendingPermission(requestId: string): void;
+  deletePendingPermissionsBySession(sessionId: string): void;
+  getPendingPermission(requestId: string): {
+    requestId: string;
+    sessionId: string;
+    toolName: string;
+    questions: unknown;
+    createdAt: string;
+  } | null;
+  listPendingPermissions(sessionId: string): Array<{
+    requestId: string;
+    sessionId: string;
+    toolName: string;
+    questions: unknown;
+    createdAt: string;
+  }>;
+}
+
+/** One recoverable pending permission returned to clients. */
+export interface PendingPermissionView {
+  requestId: string;
+  toolName: string;
+  questions: ClaudePermissionQuestion[];
+  live: boolean;
+}
+
 /** Kill a warm process after this much inactivity to free memory. */
 const IDLE_TIMEOUT_MS = 5 * 60_000;
 
@@ -24,6 +59,12 @@ interface WarmProc {
   mode: string;
   /** Interactive permission asks (can_use_tool) awaiting a client answer, by request_id. */
   pending: Map<string, { input: unknown }>;
+  /**
+   * When set, the next AskUserQuestion can_use_tool in this process is
+   * auto-answered with these answers instead of being surfaced — used to deliver
+   * a recovered answer after a `--resume` (the model re-issues the question).
+   */
+  resumeAnswers?: Record<string, string | string[]>;
 }
 
 export interface ClaudeDriverOptions {
@@ -46,6 +87,8 @@ export interface ClaudeDriverOptions {
    * Defaults to env CLAUDE_INTERACTIVE_PERMISSIONS (on unless "0"/"false").
    */
   interactivePermissions?: boolean;
+  /** Durable store so a pending AskUserQuestion survives reload / agent restart. */
+  pendingStore?: PendingPermissionStore;
 }
 
 /**
@@ -139,6 +182,8 @@ export class ClaudeDriver {
   }
 
   interrupt(sessionId: string): boolean {
+    // explicit abandon ⇒ drop any durable pending asks (don't resurface later)
+    this.opts.pendingStore?.deletePendingPermissionsBySession(sessionId);
     const w = this.procs.get(sessionId);
     if (!w) return false;
     this.kill(sessionId);
@@ -270,7 +315,12 @@ export class ClaudeDriver {
           break;
         case "done": {
           const w = this.procs.get(sessionId);
-          if (w) w.busy = false;
+          if (w) {
+            w.busy = false;
+            w.resumeAnswers = undefined; // drop any unconsumed recovery answer
+          }
+          // turn finished ⇒ no question can still be pending; clear durable rows
+          this.opts.pendingStore?.deletePendingPermissionsBySession(sessionId);
           this.touch(sessionId); // keep warm; arm idle timer
           if (ev.isError) {
             this.opts.bus.emit("claude:drive_error", sessionId, ev.result ?? "drive failed", now());
@@ -324,6 +374,7 @@ export class ClaudeDriver {
       const w = this.procs.get(sessionId);
       const rid = msg.request_id;
       if (w && rid && w.pending.delete(rid)) {
+        this.opts.pendingStore?.deletePendingPermission(rid); // claude abandoned it
         this.opts.bus.emit("claude:permission_cancel", sessionId, rid);
         this.touch(sessionId);
       }
@@ -349,11 +400,38 @@ export class ClaudeDriver {
         return true;
       }
       const w = this.procs.get(sessionId);
+      // Recovery path: a `--resume` armed an answer for the re-issued question →
+      // auto-answer it instead of bothering the user again.
+      if (w?.resumeAnswers) {
+        const answers = w.resumeAnswers;
+        w.resumeAnswers = undefined;
+        const base = (req.input && typeof req.input === "object" ? req.input : {}) as Record<
+          string,
+          unknown
+        >;
+        this.writeControl(sessionId, {
+          type: "control_response",
+          response: {
+            subtype: "success",
+            request_id: rid,
+            response: { behavior: "allow", updatedInput: { ...base, answers } },
+          },
+        });
+        return true;
+      }
       if (w) {
         w.pending.set(rid, { input: req.input });
         if (w.idle) clearTimeout(w.idle); // genuinely awaiting the user — don't reap
         w.idle = null;
       }
+      // persist so the picker survives reload / reconnect / agent restart
+      this.opts.pendingStore?.savePendingPermission({
+        requestId: rid,
+        sessionId,
+        toolName: "AskUserQuestion",
+        questions,
+        createdAt: now(),
+      });
       this.opts.bus.emit("claude:permission_request", sessionId, rid, "AskUserQuestion", questions);
       return true;
     }
@@ -393,9 +471,58 @@ export class ClaudeDriver {
         response: { behavior: "allow", updatedInput: { ...baseInput, answers } },
       },
     });
+    this.opts.pendingStore?.deletePendingPermission(requestId);
     this.opts.bus.emit("claude:permission_cancel", sessionId, requestId); // dismiss the picker
     this.touch(sessionId); // re-arm the idle reaper; the turn resumes
     return ok;
+  }
+
+  /**
+   * Answer a permission that is no longer live in-process (e.g. after an agent
+   * restart): `--resume` the session, arm the answer, and nudge the model to
+   * re-issue the question so we can auto-answer it cleanly. Returns false if no
+   * such persisted request exists.
+   */
+  async recoverAnswerPermission(
+    sessionId: string,
+    requestId: string,
+    answers: Record<string, string | string[]>,
+  ): Promise<boolean> {
+    const rec = this.opts.pendingStore?.getPendingPermission(requestId);
+    if (!rec || rec.sessionId !== sessionId) return false;
+    this.opts.pendingStore?.deletePendingPermission(requestId);
+    // reuse a warm process if one happens to exist; otherwise resume cold
+    if (!this.procs.has(sessionId)) {
+      const detail = await this.opts.store.getSession(sessionId);
+      const dir = detail?.session.cwd ?? this.opts.workspaceRoot();
+      this.spawnWarm(sessionId, ["--resume", sessionId], dir);
+    }
+    const w = this.procs.get(sessionId);
+    if (w) w.resumeAnswers = answers;
+    this.opts.bus.emit("claude:permission_cancel", sessionId, requestId);
+    // nudge the model to continue; it re-asks AskUserQuestion → auto-answered above
+    this.write(sessionId, "请根据我刚提交的选择继续。");
+    return true;
+  }
+
+  /** Recoverable pending permissions for a session (durable rows; live if in-process). */
+  listPending(sessionId: string): PendingPermissionView[] {
+    const rows = this.opts.pendingStore?.listPendingPermissions(sessionId) ?? [];
+    const w = this.procs.get(sessionId);
+    const out: PendingPermissionView[] = [];
+    for (const rec of rows) {
+      const questions = Array.isArray(rec.questions)
+        ? (rec.questions as ClaudePermissionQuestion[])
+        : null;
+      if (!questions || questions.length === 0) continue;
+      out.push({
+        requestId: rec.requestId,
+        toolName: rec.toolName,
+        questions,
+        live: !!w?.pending.has(rec.requestId),
+      });
+    }
+    return out;
   }
 
   private respondPermissionDeny(sessionId: string, requestId: string, message: string): void {

@@ -116,6 +116,8 @@ interface AppState {
     requestId: string;
     toolName: string;
     questions: ClaudePermissionQuestion[];
+    /** false ⇒ recovered from history (process gone); answering will resume the session. */
+    live?: boolean;
   } | null;
   error: string | null;
 
@@ -137,6 +139,8 @@ interface AppState {
   interrupt: () => Promise<void>;
   /** Answer the pending interactive permission (方案 B). */
   answerPermission: (answers: Record<string, string | string[]>) => Promise<void>;
+  /** Pull any pending interactive permission for a session (recover after reload/restart). */
+  refreshPendingPermission: (sessionId: string) => Promise<void>;
   /** Surface a user-facing error in the global dismissable Toast. */
   setError: (msg: string) => void;
   clearError: () => void;
@@ -279,7 +283,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     const ws = new WsClient({
       url: conn.wsUrl,
       token: conn.token,
-      onOpen: () => set({ wsConnected: true }),
+      onOpen: () => {
+        set({ wsConnected: true });
+        // a picker may have been raised while we were disconnected — recover it
+        const sel = get().selectedId;
+        if (sel) void get().refreshPendingPermission(sel);
+      },
       onClose: () => {
         set({ wsConnected: false });
         // auto-reconnect while a connection is configured (3s backoff)
@@ -319,6 +328,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ messages: [], historyOffset: 0, loadingEarlier: false });
       return;
     }
+    // recover any picker left pending on this session (missed event / reload / restart)
+    void get().refreshPendingPermission(id);
     const api = get().api;
     if (!api) return;
     // Instant restore from in-memory cache: switching back to a recently viewed
@@ -465,6 +476,33 @@ export const useAppStore = create<AppState>((set, get) => ({
       } else {
         set({ pendingPermission: p, error: "提交选择失败，请重试" });
       }
+    }
+  },
+
+  async refreshPendingPermission(sessionId) {
+    const api = get().api;
+    if (!api || !sessionId) return;
+    try {
+      const res = await api.getClaudePendingPermission(sessionId);
+      // ignore if the user switched away while the request was in flight
+      if (get().selectedId !== sessionId) return;
+      const first = res.pending[0];
+      if (first) {
+        set({
+          pendingPermission: {
+            sessionId,
+            requestId: first.requestId,
+            toolName: first.toolName,
+            questions: first.questions,
+            live: first.live,
+          },
+        });
+      } else if (get().pendingPermission?.sessionId === sessionId) {
+        // server says nothing pending → clear any stale local picker
+        set({ pendingPermission: null });
+      }
+    } catch {
+      /* recovery is best-effort; ignore failures */
     }
   },
 

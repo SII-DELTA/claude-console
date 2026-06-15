@@ -71,6 +71,8 @@ export async function startAgent(config: AgentRuntimeConfig): Promise<AgentRunti
     workspaceRoot: () => claude.activeCwd(),
     store: claude,
     bus,
+    // durable pending-permission store so a picker survives reload / restart
+    pendingStore: store,
   });
   // let session metadata report which live sessions our own driver owns
   claude.setDrivenPredicate((id) => driver.owns(id));

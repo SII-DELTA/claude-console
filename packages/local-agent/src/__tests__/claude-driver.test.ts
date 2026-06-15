@@ -188,6 +188,21 @@ describe("ClaudeDriver", () => {
 });
 
 describe("ClaudeDriver interactive permissions (方案 B)", () => {
+  function makePendingStore() {
+    const rows = new Map<string, any>();
+    return {
+      rows,
+      savePendingPermission: (r: any) => void rows.set(r.requestId, r),
+      deletePendingPermission: (id: string) => void rows.delete(id),
+      deletePendingPermissionsBySession: (sid: string) => {
+        for (const [k, v] of rows) if (v.sessionId === sid) rows.delete(k);
+      },
+      getPendingPermission: (id: string) => rows.get(id) ?? null,
+      listPendingPermissions: (sid: string) =>
+        [...rows.values()].filter((v) => v.sessionId === sid),
+    };
+  }
+
   function setupB() {
     const bus = new Bus();
     const proc = makeFakeProc();
@@ -196,6 +211,7 @@ describe("ClaudeDriver interactive permissions (方案 B)", () => {
       isLive: vi.fn(async () => false),
       getSession: vi.fn(async () => ({ session: { cwd: "/ws" } })),
     } as any;
+    const pendingStore = makePendingStore();
     const driver = new ClaudeDriver({
       workspaceRoot: () => "/ws",
       store,
@@ -203,8 +219,9 @@ describe("ClaudeDriver interactive permissions (方案 B)", () => {
       spawnFn,
       claudeBin: "claude",
       interactivePermissions: true,
+      pendingStore,
     });
-    return { bus, proc, spawnFn, store, driver };
+    return { bus, proc, spawnFn, store, driver, pendingStore };
   }
 
   /** all stdin writes parsed as JSON (skipping any that aren't) */
@@ -281,23 +298,95 @@ describe("ClaudeDriver interactive permissions (方案 B)", () => {
   });
 
   it("control_cancel_request drops the pending ask and notifies the client", () => {
-    const { driver, proc, bus } = setupB();
+    const { driver, proc, bus, pendingStore } = setupB();
     let cancelled = "";
     bus.on("claude:permission_cancel", (_s, rid) => (cancelled = rid));
     const { sessionId } = driver.newSession("ask");
     proc.stdout.emit("data", canUse("req3", "AskUserQuestion", ASK_INPUT) + "\n");
     proc.stdout.emit("data", JSON.stringify({ type: "control_cancel_request", request_id: "req3" }) + "\n");
     expect(cancelled).toBe("req3");
+    expect(pendingStore.rows.has("req3")).toBe(false); // durable row removed
     expect(driver.answerPermission(sessionId, "req3", { "Pick?": "A" })).toBe(false);
   });
 
-  it("clears pending asks and notifies when the process closes", () => {
-    const { driver, proc, bus } = setupB();
-    let cancelled = "";
-    bus.on("claude:permission_cancel", (_s, rid) => (cancelled = rid));
+  it("persists on surface and KEEPS the durable row across a process close (recoverable)", () => {
+    const { driver, proc, pendingStore } = setupB();
     driver.newSession("ask");
     proc.stdout.emit("data", canUse("req4", "AskUserQuestion", ASK_INPUT) + "\n");
+    expect(pendingStore.rows.has("req4")).toBe(true); // persisted on surface
     proc.emit("close", 0);
-    expect(cancelled).toBe("req4");
+    expect(pendingStore.rows.has("req4")).toBe(true); // crash keeps it for recovery
+  });
+
+  it("answerPermission removes the durable row; listPending reports live status", () => {
+    const { driver, proc, pendingStore } = setupB();
+    const { sessionId } = driver.newSession("ask");
+    proc.stdout.emit("data", canUse("req5", "AskUserQuestion", ASK_INPUT) + "\n");
+    const listed = driver.listPending(sessionId);
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toMatchObject({ requestId: "req5", live: true });
+    driver.answerPermission(sessionId, "req5", { "Pick?": "A" });
+    expect(pendingStore.rows.has("req5")).toBe(false);
+    expect(driver.listPending(sessionId)).toHaveLength(0);
+  });
+
+  it("listPending marks a persisted-but-dead ask as not live", () => {
+    const { driver, pendingStore } = setupB();
+    pendingStore.rows.set("rDead", {
+      requestId: "rDead",
+      sessionId: "S9",
+      toolName: "AskUserQuestion",
+      questions: [{ question: "Pick?", options: [{ label: "A" }] }],
+      createdAt: "t",
+    });
+    const listed = driver.listPending("S9");
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toMatchObject({ requestId: "rDead", live: false });
+  });
+
+  it("done clears durable rows for the session", () => {
+    const { driver, proc, pendingStore } = setupB();
+    const { sessionId } = driver.newSession("ask");
+    proc.stdout.emit("data", canUse("req6", "AskUserQuestion", ASK_INPUT) + "\n");
+    expect(pendingStore.rows.has("req6")).toBe(true);
+    proc.stdout.emit(
+      "data",
+      JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "ok" }) + "\n",
+    );
+    expect(pendingStore.rows.size).toBe(0);
+    void sessionId;
+  });
+
+  it("recoverAnswerPermission resumes and auto-answers the re-issued question (after restart)", async () => {
+    const { driver, proc, bus, spawnFn, pendingStore } = setupB();
+    // simulate a row left from a previous (now-dead) agent process
+    pendingStore.rows.set("rOld", {
+      requestId: "rOld",
+      sessionId: "S1",
+      toolName: "AskUserQuestion",
+      questions: [{ question: "Pick?", options: [{ label: "A" }, { label: "B" }] }],
+      createdAt: "t",
+    });
+    let surfaced = false;
+    bus.on("claude:permission_request", () => (surfaced = true));
+
+    const ok = await driver.recoverAnswerPermission("S1", "rOld", { "Pick?": "A" });
+    expect(ok).toBe(true);
+    expect(pendingStore.rows.has("rOld")).toBe(false); // durable row consumed
+    const args = spawnFn.mock.calls[0][1] as string[];
+    expect(args).toContain("--resume"); // resumed the session
+
+    // the model re-issues the question with a NEW request id → auto-answered, not surfaced
+    proc.stdout.emit("data", canUse("rNew", "AskUserQuestion", ASK_INPUT) + "\n");
+    expect(surfaced).toBe(false);
+    const resp = writes(proc).find(
+      (w) => w.type === "control_response" && w.response?.response?.behavior === "allow",
+    );
+    expect(resp.response.response.updatedInput.answers).toEqual({ "Pick?": "A" });
+  });
+
+  it("recoverAnswerPermission returns false when no durable row exists", async () => {
+    const { driver } = setupB();
+    expect(await driver.recoverAnswerPermission("S1", "nope", { "Pick?": "A" })).toBe(false);
   });
 });
