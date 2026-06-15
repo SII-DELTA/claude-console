@@ -224,7 +224,7 @@ function Console() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-bg text-ink flex-col md:flex-row">
+    <div className="flex h-dvh overflow-hidden bg-bg text-ink flex-col md:flex-row">
       {/* Sidebar (desktop) / Drawer (mobile) */}
       <aside className="hidden w-72 shrink-0 border-r border-line bg-bg-alt md:block">
         <Brand
@@ -332,7 +332,7 @@ function Console() {
         <div
           ref={scrollRef}
           onScroll={onScroll}
-          className="h-full overflow-y-auto px-4 py-5 scroll-thin md:px-8"
+          className="h-full overflow-y-auto overscroll-contain px-4 py-5 scroll-thin md:px-8"
         >
           {!selectedId && messages.length === 0 ? (
             <EmptyState />

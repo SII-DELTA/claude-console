@@ -14,19 +14,16 @@ function relTime(iso: string): string {
   return `${Math.floor(s / 86400)}d`;
 }
 
+const BADGE = "shrink-0 whitespace-nowrap rounded-full px-1.5 py-0.5 text-[10px] font-medium";
+
 function StatusBadge({ s }: { s: ClaudeSession }) {
-  if (s.attention === "question")
-    return <span className="rounded-full bg-accent/20 px-1.5 py-0.5 text-[10px] font-medium text-accent">待回答</span>;
-  if (s.attention === "error")
-    return <span className="rounded-full bg-danger/20 px-1.5 py-0.5 text-[10px] font-medium text-danger">出错</span>;
+  if (s.attention === "question") return <span className={`${BADGE} bg-accent/20 text-accent`}>待回答</span>;
+  if (s.attention === "error") return <span className={`${BADGE} bg-danger/20 text-danger`}>出错</span>;
   if (s.isLive)
     return (
-      <span className="rounded-full bg-success/20 px-1.5 py-0.5 text-[10px] font-medium text-success">
-        {s.drivenByAgent ? "本端运行" : "终端运行"}
-      </span>
+      <span className={`${BADGE} bg-success/20 text-success`}>{s.drivenByAgent ? "本端运行" : "终端运行"}</span>
     );
-  if (s.attention === "done")
-    return <span className="rounded-full bg-line px-1.5 py-0.5 text-[10px] text-ink-dim">已完成</span>;
+  if (s.attention === "done") return <span className={`${BADGE} bg-line text-ink-dim`}>已完成</span>;
   return null;
 }
 
@@ -34,16 +31,15 @@ function Card({ s, onOpen }: { s: ClaudeSession; onOpen: (id: string) => void })
   return (
     <button
       onClick={() => onOpen(s.id)}
-      className="flex w-full items-center gap-3 rounded-xl border border-line bg-bg-alt px-3 py-2.5 text-left transition-colors hover:border-accent/50"
+      className="flex w-full items-center gap-2.5 rounded-xl border border-line bg-bg-alt px-3 py-2.5 text-left transition-colors hover:border-accent/50"
     >
+      {/* title 自适应缩略；状态徽章 + 时间固定在右侧 */}
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="truncate text-[14px] font-medium text-ink">{s.title}</span>
-          <StatusBadge s={s} />
-        </div>
-        {s.preview && <div className="mt-0.5 truncate text-[12px] text-ink-faint">{s.preview}</div>}
+        <span className="block truncate text-[14px] font-medium text-ink">{s.title}</span>
+        {s.preview && <span className="mt-0.5 block truncate text-[12px] text-ink-faint">{s.preview}</span>}
       </div>
-      <span className="shrink-0 text-[11px] text-ink-faint">{relTime(s.updatedAt)}</span>
+      <StatusBadge s={s} />
+      <span className="shrink-0 whitespace-nowrap text-[11px] text-ink-faint">{relTime(s.updatedAt)}</span>
     </button>
   );
 }
@@ -93,7 +89,7 @@ export function Dashboard({
 
   if (sessions.length === 0) {
     return (
-      <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+      <div className="flex h-full flex-col items-center justify-center px-6 pt-safe text-center">
         <p className="text-sm text-ink-dim">还没有会话</p>
         <p className="mt-1 text-xs text-ink-faint">在 Sessions 页用「+」开启一个新会话</p>
       </div>
@@ -101,7 +97,7 @@ export function Dashboard({
   }
 
   return (
-    <div className="h-full overflow-y-auto px-4 py-4 scroll-thin">
+    <div className="h-full overflow-y-auto overscroll-contain px-4 pb-4 pt-safe scroll-thin">
       <Group title="🔴 待你处理" tone="text-accent" sessions={needAttention} onOpen={onOpen} />
       <Group title="🟢 运行中" tone="text-success" sessions={running} onOpen={onOpen} />
       <Group title="🕘 最近" tone="text-ink-dim" sessions={recent} onOpen={onOpen} />
