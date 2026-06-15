@@ -36,8 +36,8 @@
 
 - `🔴 待你处理`：`attention === "question"`（等待 AskUserQuestion/权限）或 `"error"`（出错）；以及 `"done"`（跑完待续写，弱提示）。
 - `🟢 运行中`：`isLive`（`drivenByAgent` → 标「本端」，否则「终端」）。
-- `🕘 最近`：其余会话按 `updatedAt` 倒序（截断 N 条，可「查看全部」跳 Sessions）。
-- 顶部**概览条**：活跃会话数 · 今日 token / 花费（复用 `usage-cache`）。
+- `🕘 最近`：其余会话按 `updatedAt` 倒序，**最多 5 条**，超出底部「查看全部」跳 Sessions。
+- **不做顶部概览条**（本期专注三组列表）。
 - 空态：无会话时引导「+ 新会话」。
 
 卡片信息：标题、项目名、状态徽章、相对时间、`preview` 摘要。
@@ -54,7 +54,7 @@
 
 ### 3.4 会话详情页
 - 顶栏：`<` 返回（**替换** `☰`）+ 标题 + 状态徽章（本端/终端运行中）+ `...` 溢出菜单。
-- `...` 菜单：会话/项目信息、复制 session id、（后续）删除会话；断开也可放此。
+- `...` 菜单：会话/项目信息、复制 session id、断开连接、**删除会话**（带二次确认，见 §4.4）。
 - 主体：消息流（含「加载更早」、流式气泡、用量行）——逻辑不变。
 - 底部：QuickActions + 权限选择器 + Composer——不变。
 - 接管确认（`ConfirmTakeover`）、QuestionPanel（方案 A/B）——不变。
@@ -84,6 +84,14 @@ attention: z.enum(["question", "error", "done"]).optional()
 ### 4.3 兼容
 - 字段可选，旧前端忽略不受影响；新前端无字段时按「无需关注」处理。
 
+### 4.4 删除会话（新端点，破坏性）
+- 现有 `DELETE /sessions/:id` 是 agent 自有（PTY）会话，**不适用** Claude Code 会话。
+- 新增 `DELETE /claude/sessions/:id`：删除该会话对应的 `~/.claude/projects/**/<id>.jsonl`。
+  - **破坏性**：删的是用户真实 Claude 历史。要求：前端二次确认弹窗；live 会话禁止删除（先停）。
+  - 建议**移入回收站**（重命名/移到 `~/.claude/.trash` 或加 `.deleted` 后缀）而非 `unlink`，降低误删风险——具体策略 plan 阶段定。
+  - 路径校验复用现有 path-traversal 防护（参见 `claude-store` 既有 id/dir 校验测试）。
+- `apps/web/lib/api.ts` 加 `deleteClaudeSession(id)`；store 删除后从列表移除并回到主页。
+
 ## 5. 可配置初始消息数
 
 - 现状：`apps/web/lib/store.ts` `HISTORY_PAGE = 40` **既**用于首次加载（`selectSession` → `claudeSession(id,{limit})`）**又**用于「加载更早」每页。
@@ -100,7 +108,7 @@ attention: z.enum(["question", "error", "done"]).optional()
 
 - 不改桌面端布局。
 - 不引入前端路由库（继续用 `?p=&s=` + 派生态）。
-- 删除会话、用量趋势页（方案 C）等本期不做（`...` 留删除入口位）。
+- 不做监控台顶部概览条；不做用量趋势页（方案 C）。
 - 不改腾讯云/FunASR ASR 链路。
 
 ## 7. 验收标准
@@ -109,21 +117,32 @@ attention: z.enum(["question", "error", "done"]).optional()
 2. 一个会话出现 AskUserQuestion 时，**不点进**即在「待你处理」出现，点击直达。
 3. 点会话进详情页：底部 Tab 消失、顶栏为 `<` 返回；返回回到原 Tab。
 4. Sessions 页顶部可切项目；Settings 页可断开、改默认权限。
-5. 桌面端外观/交互不变。
-6. 会话首屏渲染 10 条；「加载更早」每次 +40；`INITIAL_MESSAGES` 改值并重新 `make start` 后生效。
-7. `pnpm test` / `pnpm typecheck` 全绿（含新增 schema 字段的解析测试）。
+5. 详情页 `...` 可查看会话信息/复制 id/断开/删除会话；删除带二次确认、live 禁删、删后回主页且列表移除。
+6. 桌面端外观/交互不变。
+7. 会话首屏渲染 10 条；「加载更早」每次 +40；`INITIAL_MESSAGES` 改值并重新 `make start` 后生效。
+8. `pnpm test` / `pnpm typecheck` 全绿（含新增 schema 字段的解析测试）。
 
 ## 8. 影响文件（预估）
 
 - `packages/shared/src/schemas.ts`：`ClaudeSession.attention`。
 - `packages/local-agent/src/claude-store.ts`（+ `util/claude-*`）：计算 `attention`；相关测试。
+- `packages/local-agent/src/http-server.ts`：`DELETE /claude/sessions/:id`（删除/归档 jsonl）。
 - `apps/web/app/page.tsx`：移动端导航重构（Tab/详情切换）。
 - 新增 `apps/web/components/`：`BottomTabs`、`Dashboard`、`SettingsPage`（及会话详情头部 `<`/`...`）。
 - `apps/web/lib/store.ts`：`mobileTab` 状态、`INITIAL_MESSAGES`。
 - `scripts/dev-control.sh`、`.env.example`、`README.md`：`INITIAL_MESSAGES` 注入与文档。
 
-## 9. 待确认
+## 9. 已确认决策
 
-- `...` 溢出菜单第一期具体项（建议：会话信息 + 复制 id + 断开；删除留位后续）。
-- 「最近」分组在监控台展示条数上限（建议 5–8，超出跳 Sessions）。
-- 概览条「今日花费」口径（按 `usage-cache` 当日累计）。
+- 桌面端保留侧栏主从，仅移动端重构。
+- 底部 Tab：监控台 / Sessions / Settings。
+- 项目切换放 Sessions 页顶部。
+- `...` 菜单：会话信息 + 复制 id + 断开 + **删除会话**（破坏性，新端点，见 §4.4）。
+- 「最近」分组上限 **5 条**，超出跳 Sessions。
+- **不做**监控台顶部概览条。
+- 初始渲染 **10** 条（`INITIAL_MESSAGES`），「加载更早」仍每页 40。
+- 后端改动纳入本 spec（会话 `attention` 元数据 + 删除端点）。
+
+## 10. 待确认（plan 阶段）
+
+- 删除会话的落地策略：硬删 `unlink` vs 移入回收站（`~/.claude/.trash` 或 `.deleted` 后缀）——倾向后者。
