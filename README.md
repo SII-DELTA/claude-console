@@ -68,6 +68,27 @@ MAC_AGENT_PASSWORD=<password> MAC_AGENT_BIND=$(tailscale ip -4) ./scripts/instal
 
 流量经 Tailscale WireGuard 端到端加密，不经公网。详见 [docs/remote-access.md](docs/remote-access.md)。
 
+### 开启 HTTPS（语音输入必需）
+
+浏览器麦克风（`getUserMedia`）只在 HTTPS / localhost 下可用，所以纯 http 直连**无法用语音**。
+Tailscale 自带 HTTPS：`tailscale serve` 会为 MagicDNS 主机名签发真证书（`*.ts.net`），无需自有域名。
+
+```bash
+# 0) 一次性：Tailscale 管理后台 → DNS → 启用 MagicDNS 和 HTTPS Certificates
+
+# 1) Mac 上把 web 和 agent 各用一个 HTTPS 端口代理出去
+tailscale serve --bg --https=443  localhost:3005   # web  → https://<host>.<tailnet>.ts.net
+tailscale serve --bg --https=8443 localhost:7345   # agent→ https://<host>.<tailnet>.ts.net:8443
+tailscale serve status                              # 查看；tailscale serve reset 清空
+
+# 2) 手机浏览器开 https://<host>.<tailnet>.ts.net （HTTPS → 麦克风可用）
+#    「服务器地址」填 https://<host>.<tailnet>.ts.net:8443
+```
+
+> 用两个 HTTPS 端口是为避免「HTTPS 页面连 http agent」的混合内容拦截；两端皆 HTTPS，WS
+> 自动走 `wss://…:8443/ws`，无跨域（agent 默认 `CORS=*`）。配 serve 后 agent 保持默认绑
+> `127.0.0.1` 即可（serve 在本机代理）。同源 `/agent` 方案见 [docs/remote-access.md](docs/remote-access.md)。
+
 ## 能力边界
 
 | 能力 | 状态 |
