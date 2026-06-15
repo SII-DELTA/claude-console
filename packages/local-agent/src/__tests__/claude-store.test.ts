@@ -137,6 +137,24 @@ describe("deriveAttention", () => {
     expect(deriveAttention(acc, false)).toBe("done");
     expect(deriveAttention(acc, true)).toBeUndefined();
   });
+
+  it("clears a question superseded by a later user message (not 'question')", () => {
+    // user ignored the question and just typed something else → no longer awaiting
+    const acc = fold([userMsg("hi"), askMsg("q1"), userMsg("actually do this instead"), textReply("ok")]);
+    expect(deriveAttention(acc, false)).toBe("done");
+  });
+
+  it("clears a question answered by an error tool_result (auto-deny, not 'question')", () => {
+    const errAnswer = (id: string) =>
+      line({
+        type: "user",
+        uuid: uid(),
+        sessionId: "s",
+        message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: "denied", is_error: true }] },
+      });
+    const acc = fold([userMsg("hi"), askMsg("q1"), errAnswer("q1"), textReply("moving on")]);
+    expect(deriveAttention(acc, false)).toBe("done");
+  });
 });
 
 describe("ClaudeStore", () => {

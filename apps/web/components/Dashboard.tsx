@@ -75,11 +75,14 @@ function Tag({ children }: { children: React.ReactNode }) {
   return <span className="shrink-0 rounded bg-bg px-1.5 py-0.5 text-[10px] text-ink-dim">{children}</span>;
 }
 
-/* ── 需要你处理 卡片 ───────────────────────────────────────────────── */
+/* ── 需要你处理 卡片（整卡可点进会话）─────────────────────────────── */
 function AttentionCard({ s, kind, onOpen }: { s: ClaudeSession; kind: AttKind; onOpen: (id: string) => void }) {
   const a = ATT[kind];
   return (
-    <div className={`rounded-xl border border-line border-l-2 bg-bg-alt p-3 ${a.accent}`}>
+    <button
+      onClick={() => onOpen(s.id)}
+      className={`w-full rounded-xl border border-line border-l-2 bg-bg-alt p-3 text-left transition-colors hover:bg-bg-raised ${a.accent}`}
+    >
       <div className="flex items-start gap-3">
         <div className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg ${a.tile}`}>{a.icon(18)}</div>
         <div className="min-w-0 flex-1">
@@ -92,17 +95,7 @@ function AttentionCard({ s, kind, onOpen }: { s: ClaudeSession; kind: AttKind; o
           {s.preview && <p className="mt-1 line-clamp-2 text-[12px] text-ink-dim">{s.preview}</p>}
         </div>
       </div>
-      <div className="mt-2 flex justify-end">
-        <button
-          onClick={() => onOpen(s.id)}
-          className={`rounded-lg border px-3 py-1.5 text-[12px] font-medium transition-colors ${
-            kind === "question" ? "border-accent/50 text-accent hover:bg-accent/10" : kind === "error" ? "border-danger/50 text-danger hover:bg-danger/10" : "border-warning/50 text-warning hover:bg-warning/10"
-          }`}
-        >
-          {a.action}
-        </button>
-      </div>
-    </div>
+    </button>
   );
 }
 

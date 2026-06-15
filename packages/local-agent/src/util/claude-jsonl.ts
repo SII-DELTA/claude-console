@@ -197,23 +197,30 @@ export function accumulate(acc: SessionAccumulator, parsed: ParsedLine, keepMess
   if (!m) return;
   if (!acc.sessionId) acc.sessionId = m.sessionId;
   acc.messageCount += 1;
+  const isUserText = m.role === "user" && m.blocks.some((b) => b.kind === "text");
   if (m.role === "user") {
     acc.userMessageCount += 1;
     if (!acc.firstUserText) {
       const t = m.blocks.find((b) => b.kind === "text");
       if (t && t.kind === "text") acc.firstUserText = t.text;
     }
+    // A real follow-up user message (free text, not just a tool_result) means the
+    // user moved on — any earlier AskUserQuestion is no longer awaiting them. This
+    // keeps long normal conversations out of the "needs answer" list.
+    if (isUserText) acc.openQuestionIds.clear();
   } else if (m.role === "assistant") {
     acc.assistantMessageCount += 1;
   }
   if (m.role === "user" || m.role === "assistant") acc.lastRole = m.role;
   acc.toolUseCount += m.blocks.filter((b) => b.kind === "tool_use").length;
-  // Track unanswered AskUserQuestion across the conversation: open on the
-  // tool_use, close when a non-error tool_result with the same id arrives.
+  // Track an unanswered AskUserQuestion: open on the tool_use, close on *any*
+  // matching tool_result (including an error/auto-deny — that still means it's no
+  // longer blocking on the user). Only a question with no tool_result at all (e.g. a
+  // live turn paused awaiting the answer) stays open.
   for (const b of m.blocks) {
     if (b.kind === "tool_use" && b.toolName === "AskUserQuestion" && b.toolUseId) {
       acc.openQuestionIds.add(b.toolUseId);
-    } else if (b.kind === "tool_result" && !b.isError && b.toolUseId) {
+    } else if (b.kind === "tool_result" && b.toolUseId) {
       acc.openQuestionIds.delete(b.toolUseId);
     }
   }
