@@ -204,19 +204,20 @@ export function accumulate(acc: SessionAccumulator, parsed: ParsedLine, keepMess
   if (!m) return;
   if (!acc.sessionId) acc.sessionId = m.sessionId;
   acc.messageCount += 1;
-  const isUserText = m.role === "user" && m.blocks.some((b) => b.kind === "text");
   if (m.role === "user") {
     acc.userMessageCount += 1;
-    const t = m.blocks.find((b) => b.kind === "text");
-    if (t && t.kind === "text") {
-      if (!acc.firstUserText) acc.firstUserText = t.text;
+    // Real user text only — strip IDE/system-injected wrappers (<ide_opened_file>,
+    // <system-reminder>, slash-command envelopes…) so titles reflect what the user
+    // actually typed, not editor context auto-attached to the turn.
+    const realText = userText(m.blocks);
+    if (realText) {
+      if (!acc.firstUserText) acc.firstUserText = realText;
       // track the *latest* user instruction (the session's current task focus)
-      acc.lastUserText = t.text;
+      acc.lastUserText = realText;
+      // A real follow-up user message means the user moved on — any earlier
+      // AskUserQuestion is no longer awaiting them. (Injected-only turns don't count.)
+      acc.openQuestionIds.clear();
     }
-    // A real follow-up user message (free text, not just a tool_result) means the
-    // user moved on — any earlier AskUserQuestion is no longer awaiting them. This
-    // keeps long normal conversations out of the "needs answer" list.
-    if (isUserText) acc.openQuestionIds.clear();
   } else if (m.role === "assistant") {
     acc.assistantMessageCount += 1;
     for (const b of m.blocks) {
@@ -274,6 +275,33 @@ export function deriveTitle(acc: SessionAccumulator, fallbackId: string): string
 function clip(s: string, n: number): string {
   const one = s.replace(/\s+/g, " ").trim();
   return one.length > n ? `${one.slice(0, n)}…` : one;
+}
+
+// IDE/CLI context the harness injects into a user turn — not typed by the user.
+const INJECTED_TAGS =
+  "ide_opened_file|ide_selection|ide_diagnostics|ide_recently_modified_files|" +
+  "system-reminder|command-name|command-message|command-args|" +
+  "local-command-stdout|local-command-stderr";
+
+/** Remove whole `<tag>…</tag>` injected-context blocks (and stray tag markers). */
+export function stripInjectedText(text: string): string {
+  return text
+    .replace(new RegExp(`<(${INJECTED_TAGS})>[\\s\\S]*?</\\1>`, "gi"), " ")
+    .replace(new RegExp(`</?(${INJECTED_TAGS})>`, "gi"), " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Concatenated real user text from a message's blocks (injected wrappers stripped). */
+export function userText(blocks: ClaudeMessageBlock[]): string {
+  const parts: string[] = [];
+  for (const b of blocks) {
+    if (b.kind === "text") {
+      const cleaned = stripInjectedText(b.text);
+      if (cleaned) parts.push(cleaned);
+    }
+  }
+  return parts.join(" ").replace(/\s+/g, " ").trim();
 }
 
 /** Latest user instruction (the session's current task), clipped. Empty → undefined. */

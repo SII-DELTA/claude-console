@@ -6,6 +6,7 @@ import {
   deriveResult,
   newAccumulator,
   parseLine,
+  stripInjectedText,
   type SessionAccumulator,
 } from "../util/claude-jsonl.js";
 
@@ -25,6 +26,15 @@ const user = (text: string, i: number) => ({
   sessionId: "s",
   timestamp: `2026-06-16T00:0${i}:00Z`,
   message: { role: "user", content: [{ type: "text", text }] },
+});
+
+/** user message with multiple text blocks (e.g. IDE-injected context + real prompt). */
+const userBlocks = (texts: string[], i: number) => ({
+  type: "user",
+  uuid: `u${i}`,
+  sessionId: "s",
+  timestamp: `2026-06-16T00:0${i}:00Z`,
+  message: { role: "user", content: texts.map((t) => ({ type: "text", text: t })) },
 });
 
 const assistantText = (text: string, i: number) => ({
@@ -58,6 +68,32 @@ describe("deriveLastUser", () => {
     const out = deriveLastUser(fold([user(long, 1)]))!;
     expect(out.endsWith("…")).toBe(true);
     expect(out.length).toBeLessThanOrEqual(121);
+  });
+});
+
+describe("stripInjectedText / IDE-injected user turns", () => {
+  it("strips <ide_opened_file> wrappers", () => {
+    const raw =
+      "<ide_opened_file>The user opened the file /a/.env in the IDE. This may or may not be related.</ide_opened_file>";
+    expect(stripInjectedText(raw)).toBe("");
+  });
+
+  it("keeps the real prompt when an injected block precedes it", () => {
+    const acc = fold([
+      userBlocks(
+        ["<ide_opened_file>The user opened /a/b.ts in the IDE.</ide_opened_file>", "桌面端能加划词翻译吗"],
+        1,
+      ),
+    ]);
+    expect(deriveLastUser(acc)).toBe("桌面端能加划词翻译吗");
+  });
+
+  it("an injected-only user turn does not become the title", () => {
+    const acc = fold([
+      user("真正的任务：修复登录", 1),
+      userBlocks(["<ide_opened_file>The user opened /x.ts in the IDE.</ide_opened_file>"], 2),
+    ]);
+    expect(deriveLastUser(acc)).toBe("真正的任务：修复登录");
   });
 });
 

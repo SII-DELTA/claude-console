@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import type { Bus } from "./bus.js";
 import type { ClaudeStore } from "./claude-store.js";
 import type { LLMClient } from "./llm-client.js";
+import { stripInjectedText } from "./util/claude-jsonl.js";
 import type { ClaudeMessage } from "@mac/shared";
 
 /**
@@ -187,8 +188,10 @@ function buildTranscript(messages: ClaudeMessage[]): string {
     const who = m.role === "user" ? "用户" : "助手";
     const parts: string[] = [];
     for (const b of m.blocks) {
-      if (b.kind === "text" && b.text.trim()) parts.push(b.text.trim());
-      else if (b.kind === "tool_use") parts.push(`[工具:${b.toolName}]`);
+      if (b.kind === "text") {
+        const cleaned = stripInjectedText(b.text); // drop IDE/system-injected context
+        if (cleaned) parts.push(cleaned);
+      } else if (b.kind === "tool_use") parts.push(`[工具:${b.toolName}]`);
     }
     const text = parts.join(" ").replace(/\s+/g, " ").trim();
     if (text) lines.push(`${who}: ${text.slice(0, 600)}`);
