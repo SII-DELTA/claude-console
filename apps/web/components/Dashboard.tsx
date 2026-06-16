@@ -184,7 +184,7 @@ function RunningRow({ s, onOpen }: { s: ClaudeSession; onOpen: (id: string) => v
         </div>
       </div>
       <div className="shrink-0 text-right">
-        <div className="whitespace-nowrap text-[11px] text-ink-dim">消息 {s.messageCount} · 工具 {s.toolUseCount}</div>
+        <div className="whitespace-nowrap text-[11px] text-ink-dim">消息 {s.messageCount}</div>
         <div className="text-[11px] text-ink-faint">{relTime(s.updatedAt)}</div>
       </div>
     </button>
