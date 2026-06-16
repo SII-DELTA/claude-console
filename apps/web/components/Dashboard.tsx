@@ -81,8 +81,9 @@ const ATT = {
 
 type AttKind = keyof typeof ATT;
 
-function Tag({ children }: { children: React.ReactNode }) {
-  return <span className="shrink-0 rounded bg-bg px-1.5 py-0.5 text-[10px] text-ink-dim">{children}</span>;
+/** Bottom meta line shared by all cards: 项目名 · [消息 N ·] 时间 等次要信息。 */
+function MetaLine({ children }: { children: React.ReactNode }) {
+  return <div className="mt-1 flex items-center gap-1.5 whitespace-nowrap text-[11px] text-ink-faint">{children}</div>;
 }
 
 /* ── 需要你处理 卡片（点击进会话；右滑忽略）─────────────────────────── */
@@ -152,15 +153,12 @@ function AttentionCard({
         <div className="flex items-start gap-3">
           <div className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg ${a.tile}`}>{a.icon(18)}</div>
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <span className="truncate text-[14px] font-medium text-ink">{cardTitle(s)}</span>
-              <Tag>{projName(s.cwd)}</Tag>
-              <span className={`ml-auto shrink-0 whitespace-nowrap rounded-full px-1.5 py-0.5 text-[10px] font-medium ${a.badge}`}>{a.label}</span>
-              <span className="shrink-0 whitespace-nowrap text-[11px] text-ink-faint">{relTime(s.updatedAt)}</span>
-            </div>
-            {(s.lastResult ?? s.preview) && (
-              <p className="mt-1 line-clamp-2 text-[12px] text-ink-dim">{s.lastResult ?? s.preview}</p>
-            )}
+            <div className="line-clamp-2 text-[14px] font-medium leading-snug text-ink">{cardTitle(s)}</div>
+            <MetaLine>
+              <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${a.badge}`}>{a.label}</span>
+              <span className="truncate">{projName(s.cwd)}</span>
+              <span className="shrink-0">· {relTime(s.updatedAt)}</span>
+            </MetaLine>
           </div>
         </div>
       </div>
@@ -171,19 +169,17 @@ function AttentionCard({
 /* ── 正在运行 行 ───────────────────────────────────────────────────── */
 function RunningRow({ s, onOpen }: { s: ClaudeSession; onOpen: (id: string) => void }) {
   return (
-    <button onClick={() => onOpen(s.id)} className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition-colors hover:bg-bg-raised">
-      <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-success/15 text-success"><TypeIcon name={projName(s.cwd)} size={16} /></div>
+    <button onClick={() => onOpen(s.id)} className="flex w-full items-start gap-3 rounded-lg px-2 py-2 text-left transition-colors hover:bg-bg-raised">
+      <div className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-success/15 text-success"><TypeIcon name={projName(s.cwd)} size={16} /></div>
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5">
-          <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink">{cardTitle(s)}</span>
-          <Tag>{projName(s.cwd)}</Tag>
+        <div className="line-clamp-2 text-[13px] font-medium leading-snug text-ink">{cardTitle(s)}</div>
+        <div className="mt-0.5 truncate text-[11px] text-success">{s.lastActivity ? `正在 ${s.lastActivity}` : "思考中…"}</div>
+        <MetaLine>
           <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-success" />
-        </div>
-        <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-ink-faint">
-          <span className="min-w-0 flex-1 truncate">{s.lastActivity ? `正在 ${s.lastActivity}` : "思考中…"}</span>
-          <span className="shrink-0 whitespace-nowrap text-ink-dim">消息 {s.messageCount}</span>
-          <span className="shrink-0 whitespace-nowrap">· {relTime(s.updatedAt)}</span>
-        </div>
+          <span className="truncate">{projName(s.cwd)}</span>
+          <span className="shrink-0">· 消息 {s.messageCount}</span>
+          <span className="shrink-0">· {relTime(s.updatedAt)}</span>
+        </MetaLine>
       </div>
     </button>
   );
@@ -193,18 +189,17 @@ function RunningRow({ s, onOpen }: { s: ClaudeSession; onOpen: (id: string) => v
 function DoneRow({ s, onOpen }: { s: ClaudeSession; onOpen: (id: string) => void }) {
   const dur = s.createdAt ? Math.round((new Date(s.updatedAt).getTime() - new Date(s.createdAt).getTime()) / 60000) : null;
   return (
-    <button onClick={() => onOpen(s.id)} className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition-colors hover:bg-bg-raised">
-      <svg viewBox="0 0 24 24" width="18" height="18" {...sw} className="shrink-0 text-warning"><circle cx="12" cy="12" r="9" /><polyline points="8.5 12 11 14.5 15.5 9.5" /></svg>
+    <button onClick={() => onOpen(s.id)} className="flex w-full items-start gap-3 rounded-lg px-2 py-2 text-left transition-colors hover:bg-bg-raised">
+      <svg viewBox="0 0 24 24" width="18" height="18" {...sw} className="mt-0.5 shrink-0 text-warning"><circle cx="12" cy="12" r="9" /><polyline points="8.5 12 11 14.5 15.5 9.5" /></svg>
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="truncate text-[13px] font-medium text-ink">{cardTitle(s)}</span>
-          <Tag>{projName(s.cwd)}</Tag>
-        </div>
-        <div className="truncate text-[11px] text-ink-faint">
-          {s.lastResult ? s.lastResult : `已完成${dur != null ? ` · 总耗时 ${dur}m` : ""}`}
-        </div>
+        <div className="line-clamp-2 text-[13px] font-medium leading-snug text-ink">{cardTitle(s)}</div>
+        {s.lastResult && <div className="mt-0.5 truncate text-[11px] text-ink-dim">{s.lastResult}</div>}
+        <MetaLine>
+          <span className="truncate">{projName(s.cwd)}</span>
+          <span className="shrink-0">· {relTime(s.updatedAt)}</span>
+          {dur != null && <span className="shrink-0">· 耗时 {dur}m</span>}
+        </MetaLine>
       </div>
-      <span className="shrink-0 whitespace-nowrap text-[11px] text-ink-faint">{relTime(s.updatedAt)}</span>
     </button>
   );
 }
