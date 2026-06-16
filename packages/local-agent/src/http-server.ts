@@ -346,11 +346,14 @@ export async function buildHttpApp(opts: BuildHttpOptions): Promise<FastifyInsta
         reply.code(400);
         return { error: "bad_request", code: ERROR_CODES.BAD_REQUEST, issues: parsed.error.issues };
       }
-      const ok = opts.driver.approveTool(
+      // live (in-process) first; otherwise the process is gone (recovered row) →
+      // drop the durable row so the badge/panel clears instead of lingering.
+      let ok = opts.driver.approveTool(
         req.params.id,
         parsed.data.requestId,
         parsed.data.decision,
       );
+      if (!ok) ok = opts.driver.dropApproval(req.params.id, parsed.data.requestId);
       if (!ok) {
         reply.code(409);
         return {

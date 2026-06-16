@@ -517,12 +517,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     const api = get().api;
     const p = get().toolApproval;
     if (!api || !p) return;
-    // recovered (process gone) → can't answer; just dismiss the stale panel
-    if (p.live === false) {
-      set({ toolApproval: null });
-      return;
-    }
-    set({ toolApproval: null }); // optimistic; server also emits a cancel
+    // optimistic close; server emits a cancel + session_updated to reconcile all
+    // clients. For a recovered (process-gone) approval the server drops the stale
+    // durable row, so the "approval" badge clears everywhere — don't short-circuit.
+    set({ toolApproval: null });
     try {
       await api.answerClaudeToolApproval(p.sessionId, p.requestId, decision);
     } catch (err) {

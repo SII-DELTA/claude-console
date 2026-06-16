@@ -186,9 +186,10 @@ export class ClaudeDriver {
     // explicit abandon ⇒ drop any durable pending asks (don't resurface later)
     this.opts.pendingStore?.deletePendingPermissionsBySession(sessionId);
     const w = this.procs.get(sessionId);
-    if (!w) return false;
-    this.kill(sessionId);
-    return true;
+    if (w) this.kill(sessionId);
+    // rows were dropped above → re-derive so any "approval" badge clears now
+    void this.opts.store.refreshSession(sessionId);
+    return !!w;
   }
 
   /** True when a turn is actively in flight for the session. */
@@ -504,6 +505,22 @@ export class ClaudeDriver {
   }
 
   /**
+   * Drop a pending tool approval that can no longer be answered in-process (the
+   * process died and it was recovered as `live:false`). Deletes the durable row,
+   * dismisses the panel, and clears the "approval" badge. Returns true if an
+   * approval row was actually dropped (idempotent / kind-checked).
+   */
+  dropApproval(sessionId: string, requestId: string): boolean {
+    const rec = this.opts.pendingStore?.getPendingPermission(requestId);
+    if (!rec || rec.sessionId !== sessionId || rec.kind !== "approval") return false;
+    this.opts.pendingStore?.deletePendingPermission(requestId);
+    this.procs.get(sessionId)?.pending.delete(requestId);
+    this.opts.bus.emit("claude:permission_cancel", sessionId, requestId);
+    void this.opts.store.refreshSession(sessionId);
+    return true;
+  }
+
+  /**
    * Answer a pending interactive permission (AskUserQuestion) with the user's
    * choices. `answers` maps question text → chosen label(s). Returns false if the
    * request is no longer pending (already answered / turn aborted).
@@ -516,7 +533,7 @@ export class ClaudeDriver {
     const w = this.procs.get(sessionId);
     if (!w) return false;
     const pend = w.pending.get(requestId);
-    if (!pend) return false;
+    if (!pend || pend.kind !== "question") return false; // not an AskUserQuestion
     const baseInput = (pend.input && typeof pend.input === "object" ? pend.input : {}) as Record<
       string,
       unknown
@@ -550,7 +567,7 @@ export class ClaudeDriver {
     const w = this.procs.get(sessionId);
     if (!w) return false;
     const pend = w.pending.get(requestId);
-    if (!pend) return false;
+    if (!pend || pend.kind !== "question") return false; // not an AskUserQuestion
     const baseInput = (pend.input && typeof pend.input === "object" ? pend.input : {}) as Record<
       string,
       unknown
