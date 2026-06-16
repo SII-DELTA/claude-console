@@ -175,17 +175,15 @@ function RunningRow({ s, onOpen }: { s: ClaudeSession; onOpen: (id: string) => v
       <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-success/15 text-success"><TypeIcon name={projName(s.cwd)} size={16} /></div>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
-          <span className="truncate text-[13px] font-medium text-ink">{cardTitle(s)}</span>
+          <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink">{cardTitle(s)}</span>
           <Tag>{projName(s.cwd)}</Tag>
           <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-success" />
         </div>
-        <div className="truncate text-[11px] text-ink-faint">
-          {s.lastActivity ? `正在 ${s.lastActivity}` : "思考中…"}
+        <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-ink-faint">
+          <span className="min-w-0 flex-1 truncate">{s.lastActivity ? `正在 ${s.lastActivity}` : "思考中…"}</span>
+          <span className="shrink-0 whitespace-nowrap text-ink-dim">消息 {s.messageCount}</span>
+          <span className="shrink-0 whitespace-nowrap">· {relTime(s.updatedAt)}</span>
         </div>
-      </div>
-      <div className="shrink-0 text-right">
-        <div className="whitespace-nowrap text-[11px] text-ink-dim">消息 {s.messageCount}</div>
-        <div className="text-[11px] text-ink-faint">{relTime(s.updatedAt)}</div>
       </div>
     </button>
   );
