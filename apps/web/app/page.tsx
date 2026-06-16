@@ -16,6 +16,7 @@ import { LoadingBadge } from "../components/LoadingBadge";
 import { BottomTabs } from "../components/BottomTabs";
 import { Dashboard } from "../components/Dashboard";
 import { SettingsPage } from "../components/SettingsPage";
+import { ProjectsPage } from "../components/ProjectsPage";
 import { notify } from "../lib/notify";
 import { onPushOpenSession } from "../lib/push";
 import { useEdgeSwipeBack } from "../lib/useEdgeSwipeBack";
@@ -297,19 +298,35 @@ function Console() {
       {!mobileDetail && (
         <div className="flex min-h-0 flex-1 flex-col md:hidden">
           <HomeHeader
-            title={mobileTab === "dashboard" ? "Claude Console" : mobileTab === "sessions" ? "Sessions" : "Settings"}
+            title={
+              mobileTab === "dashboard"
+                ? "Claude Console"
+                : mobileTab === "projects"
+                  ? "Projects"
+                  : mobileTab === "sessions"
+                    ? "Sessions"
+                    : "Settings"
+            }
             wsConnected={wsConnected}
           />
           <div className="min-h-0 flex-1">
             {mobileTab === "dashboard" && (
               <Dashboard
                 sessions={allSessions}
-                projects={projects}
+                projects={projects.filter((p) => !p.hidden)}
                 focus={dashboardFocus}
                 onFocus={setDashboardFocus}
                 onOpen={(id) => void openFromDashboard(id)}
                 onShowAll={() => setMobileTab("sessions")}
                 onIgnore={(id) => void dismissQuestion(id)}
+              />
+            )}
+            {mobileTab === "projects" && (
+              <ProjectsPage
+                onOpenProject={(dir) => {
+                  void switchProject(dir);
+                  setMobileTab("sessions");
+                }}
               />
             )}
             {mobileTab === "sessions" && (

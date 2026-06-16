@@ -7,6 +7,7 @@ import type {
   ClaudePermissionMode,
   ClaudeProject,
   ClaudeSession,
+  FsListResponse,
   ListWorkspacesResponse,
   PushSubscriptionJSON,
   Workspace,
@@ -112,6 +113,24 @@ export class ApiClient {
 
   switchClaudeProject(dir: string): Promise<{ project: ClaudeProject; sessions: ClaudeSession[] }> {
     return this.request("POST", "/claude/projects/switch", { dir });
+  }
+
+  hideClaudeProject(dir: string): Promise<{ projects: ClaudeProject[] }> {
+    return this.request("POST", "/claude/projects/hide", { dir });
+  }
+
+  unhideClaudeProject(dir: string): Promise<{ projects: ClaudeProject[] }> {
+    return this.request("POST", "/claude/projects/unhide", { dir });
+  }
+
+  addClaudeProject(cwd: string): Promise<{ projects: ClaudeProject[] }> {
+    return this.request("POST", "/claude/projects/add", { cwd });
+  }
+
+  /** Browse a directory on the host (folders only) for the project picker. */
+  fsList(path?: string): Promise<FsListResponse> {
+    const q = path ? `?path=${encodeURIComponent(path)}` : "";
+    return this.request("GET", `/claude/fs/list${q}`);
   }
 
   // ─────────────── Claude Code sessions ───────────────

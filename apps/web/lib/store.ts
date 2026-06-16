@@ -104,7 +104,7 @@ export type DriveStatus = "idle" | "streaming";
 export type SendState = "sending" | "delivered" | "read" | "failed";
 
 /** Active bottom-tab on mobile (desktop keeps the sidebar layout, ignores this). */
-export type MobileTab = "dashboard" | "sessions" | "settings";
+export type MobileTab = "dashboard" | "projects" | "sessions" | "settings";
 
 /** Live streaming buffer for the session currently being driven. */
 export interface StreamBuffer {
@@ -180,6 +180,10 @@ interface AppState {
   switchProject: (dir: string) => Promise<void>;
   /** set the dashboard's project focus (null = all-projects overview) */
   setDashboardFocus: (dir: string | null) => void;
+  /** project management: hide / unhide a project, or add (pin) one by cwd */
+  hideProject: (dir: string) => Promise<void>;
+  unhideProject: (dir: string) => Promise<void>;
+  addProject: (cwd: string) => Promise<void>;
   /** restore project + session from the URL (?p=&s=) on first load */
   restoreFromUrl: () => Promise<void>;
   loadSessions: () => Promise<void>;
@@ -445,6 +449,41 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setDashboardFocus(dir) {
     set({ dashboardFocus: dir });
+  },
+
+  async hideProject(dir) {
+    const api = get().api;
+    if (!api) return;
+    try {
+      const res = await api.hideClaudeProject(dir);
+      set({ projects: res.projects });
+      void get().loadAllSessions(); // hidden project drops out of the overview
+    } catch (err) {
+      set({ error: describeError(err) });
+    }
+  },
+
+  async unhideProject(dir) {
+    const api = get().api;
+    if (!api) return;
+    try {
+      const res = await api.unhideClaudeProject(dir);
+      set({ projects: res.projects });
+      void get().loadAllSessions();
+    } catch (err) {
+      set({ error: describeError(err) });
+    }
+  },
+
+  async addProject(cwd) {
+    const api = get().api;
+    if (!api) return;
+    try {
+      const res = await api.addClaudeProject(cwd);
+      set({ projects: res.projects });
+    } catch (err) {
+      set({ error: describeError(err) });
+    }
   },
 
   async selectSession(id) {
