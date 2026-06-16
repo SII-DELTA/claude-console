@@ -10,6 +10,7 @@ import { WsBridge } from "./ws-bridge.js";
 import { buildHttpApp } from "./http-server.js";
 import { ClaudeStore } from "./claude-store.js";
 import { ClaudeDriver } from "./claude-driver.js";
+import { CurrentTaskSummarizer } from "./current-task.js";
 import { SessionLiveness } from "./session-liveness.js";
 import { installLivenessHooks } from "./hooks-installer.js";
 import { PushManager } from "./push-manager.js";
@@ -110,6 +111,16 @@ export async function startAgent(config: AgentRuntimeConfig): Promise<AgentRunti
       (e) => console.warn(`[agent] 安装会话运行态 hooks 失败：${e instanceof Error ? e.message : e}`),
     );
   }
+  // Out-of-band "current task" observer (spec layer C): a one-shot Haiku per
+  // completed turn labels what each session is *currently* doing, so dashboard
+  // titles track the live task instead of the opening prompt. Read-only; never
+  // touches the driven session. Default on (env CURRENT_TASK_SUMMARY to disable).
+  let currentTask: CurrentTaskSummarizer | null = null;
+  if (CurrentTaskSummarizer.enabled()) {
+    currentTask = new CurrentTaskSummarizer({ store: claude, bus });
+    claude.setCurrentTaskPredicate((id) => currentTask?.get(id));
+    currentTask.start();
+  }
   // restore dismissed questions so they stay cleared across restarts
   claude.setDismissedQuestions(store.listDismissedQuestionIds());
   const password = config.password ?? process.env.MAC_AGENT_PASSWORD;
@@ -206,6 +217,7 @@ export async function startAgent(config: AgentRuntimeConfig): Promise<AgentRunti
     async stop() {
       sessions.destroyAll();
       driver.destroyAll();
+      currentTask?.stop();
       liveness.stop();
       await claude.stop();
       await ws.close();

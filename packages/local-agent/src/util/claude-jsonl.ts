@@ -162,6 +162,13 @@ export interface SessionAccumulator {
   aiTitle?: string;
   modelId?: string;
   firstUserText?: string;
+  /** most recent user free-text turn — drives the dashboard's "current task" title */
+  lastUserText?: string;
+  /** most recent assistant text block — used as the "done" result summary */
+  lastAssistantText?: string;
+  /** most recent assistant tool_use — used to render the running "activity" line */
+  lastToolName?: string;
+  lastToolInput?: unknown;
   messageCount: number;
   userMessageCount: number;
   assistantMessageCount: number;
@@ -200,9 +207,11 @@ export function accumulate(acc: SessionAccumulator, parsed: ParsedLine, keepMess
   const isUserText = m.role === "user" && m.blocks.some((b) => b.kind === "text");
   if (m.role === "user") {
     acc.userMessageCount += 1;
-    if (!acc.firstUserText) {
-      const t = m.blocks.find((b) => b.kind === "text");
-      if (t && t.kind === "text") acc.firstUserText = t.text;
+    const t = m.blocks.find((b) => b.kind === "text");
+    if (t && t.kind === "text") {
+      if (!acc.firstUserText) acc.firstUserText = t.text;
+      // track the *latest* user instruction (the session's current task focus)
+      acc.lastUserText = t.text;
     }
     // A real follow-up user message (free text, not just a tool_result) means the
     // user moved on — any earlier AskUserQuestion is no longer awaiting them. This
@@ -210,6 +219,13 @@ export function accumulate(acc: SessionAccumulator, parsed: ParsedLine, keepMess
     if (isUserText) acc.openQuestionIds.clear();
   } else if (m.role === "assistant") {
     acc.assistantMessageCount += 1;
+    for (const b of m.blocks) {
+      if (b.kind === "text" && b.text.trim()) acc.lastAssistantText = b.text;
+      else if (b.kind === "tool_use") {
+        acc.lastToolName = b.toolName;
+        acc.lastToolInput = b.input;
+      }
+    }
   }
   if (m.role === "user" || m.role === "assistant") acc.lastRole = m.role;
   acc.toolUseCount += m.blocks.filter((b) => b.kind === "tool_use").length;
@@ -253,4 +269,65 @@ export function deriveTitle(acc: SessionAccumulator, fallbackId: string): string
   const t = (acc.firstUserText ?? "").trim().replace(/\s+/g, " ");
   if (t) return t.length > 80 ? `${t.slice(0, 80)}…` : t;
   return `Claude session ${fallbackId.slice(0, 8)}`;
+}
+
+function clip(s: string, n: number): string {
+  const one = s.replace(/\s+/g, " ").trim();
+  return one.length > n ? `${one.slice(0, n)}…` : one;
+}
+
+/** Latest user instruction (the session's current task), clipped. Empty → undefined. */
+export function deriveLastUser(acc: SessionAccumulator): string | undefined {
+  const t = (acc.lastUserText ?? "").trim();
+  return t ? clip(t, 120) : undefined;
+}
+
+/** First line of the assistant's last text — a "result" summary for done sessions. */
+export function deriveResult(acc: SessionAccumulator): string | undefined {
+  const t = (acc.lastAssistantText ?? "").split("\n").find((l) => l.trim());
+  return t ? clip(t, 120) : undefined;
+}
+
+/** Friendly one-line "what it's doing now" from the last tool_use. Empty → undefined. */
+export function deriveActivity(acc: SessionAccumulator): string | undefined {
+  const name = acc.lastToolName;
+  if (!name) return undefined;
+  const obj =
+    acc.lastToolInput && typeof acc.lastToolInput === "object"
+      ? (acc.lastToolInput as Record<string, unknown>)
+      : {};
+  const arg = (v: unknown): string => clip(typeof v === "string" ? v : "", 60);
+  const file = (p: unknown): string => {
+    const s = typeof p === "string" ? p : "";
+    return clip(s.split("/").filter(Boolean).pop() ?? s, 48);
+  };
+  switch (name) {
+    case "Bash":
+      return `运行 ${arg(obj.command)}`;
+    case "Edit":
+    case "MultiEdit":
+      return `编辑 ${file(obj.file_path)}`;
+    case "Write":
+      return `写入 ${file(obj.file_path)}`;
+    case "Read":
+      return `读取 ${file(obj.file_path)}`;
+    case "NotebookEdit":
+      return `编辑 ${file(obj.notebook_path)}`;
+    case "Grep":
+      return `搜索 ${arg(obj.pattern)}`;
+    case "Glob":
+      return `查找 ${arg(obj.pattern)}`;
+    case "WebFetch":
+      return `读取网页 ${arg(obj.url)}`;
+    case "WebSearch":
+      return `网页搜索 ${arg(obj.query)}`;
+    case "Task":
+      return "运行子任务";
+    case "TodoWrite":
+      return "更新任务清单";
+    case "AskUserQuestion":
+      return "等待你的回答";
+    default:
+      return `使用 ${clip(name, 32)}`;
+  }
 }
