@@ -134,7 +134,10 @@ function ProjectChooser({ projects, onPick, onClose }: { projects: ClaudeProject
 
 export function SessionsPage({ onSelect, onNewInProject }: { onSelect: (id: string) => void; onNewInProject: (dir: string) => void }) {
   const allSessions = useAppStore((s) => s.allSessions);
-  const projects = useAppStore((s) => s.projects.filter((p) => !p.hidden));
+  // NOTE: select the raw array; filtering inside the selector returns a new array
+  // every render → zustand/useSyncExternalStore infinite loop ("Maximum update depth").
+  const allProjects = useAppStore((s) => s.projects);
+  const projects = allProjects.filter((p) => !p.hidden);
   const focus = useAppStore((s) => s.sessionsFocus);
   const setFocus = useAppStore((s) => s.setSessionsFocus);
   const [choosing, setChoosing] = useState(false);
