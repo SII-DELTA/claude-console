@@ -503,6 +503,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ pendingPermission: null });
     try {
       await api.answerClaudePermission(p.sessionId, p.requestId, answers);
+      // surface the next pending ask (question or approval) if the turn has more
+      void get().refreshPendingPermission(p.sessionId);
     } catch (err) {
       // restore so the user can retry if the request was still pending
       if (isLiveConflict(err)) {
@@ -523,6 +525,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ toolApproval: null });
     try {
       await api.answerClaudeToolApproval(p.sessionId, p.requestId, decision);
+      // a turn may have several tool calls awaiting approval at once; the earlier
+      // ones were overwritten in the single-slot UI. Pull the next one (if any) so
+      // the panel doesn't go blank while the turn is still blocked.
+      void get().refreshPendingPermission(p.sessionId);
     } catch (err) {
       if (isLiveConflict(err)) {
         // 409 = no longer pending (already handled / turn ended); stay dismissed
