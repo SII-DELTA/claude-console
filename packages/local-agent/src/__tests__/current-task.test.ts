@@ -53,6 +53,20 @@ describe("CurrentTaskSummarizer", () => {
     expect(out.length).toBeLessThanOrEqual(25);
   });
 
+  it("kickstarts a summary the first time a session starts running", async () => {
+    const bus = new Bus();
+    const store = fakeStore([msg("user", "新任务：修登录", 1)], () => {});
+    const summarizeFn = vi.fn(async () => "修复登录流程");
+    const s = new CurrentTaskSummarizer({ store, bus, summarizeFn, kickstartDelayMs: 0 });
+    s.start();
+    bus.emit("claude:driving", "s", true);
+    await vi.waitFor(() => expect(s.get("s")).toBe("修复登录流程"));
+    // a second driving=true must NOT re-kick (economical afterwards)
+    bus.emit("claude:driving", "s", true);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(summarizeFn).toHaveBeenCalledTimes(1);
+  });
+
   it("dedups: does not re-summarize when message count is unchanged", async () => {
     const bus = new Bus();
     const store = fakeStore([msg("user", "做事", 1)], () => {});

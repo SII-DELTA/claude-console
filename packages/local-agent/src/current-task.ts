@@ -34,6 +34,10 @@ const TAIL_MESSAGES = 16;
 const TRANSCRIPT_BUDGET = 4000;
 const SUMMARY_MAX = 24;
 const SPAWN_TIMEOUT_MS = 25_000;
+/** delay after a session first starts running before the initial summary (let the
+ *  new user turn land in the jsonl first) — gives a fast first title, then we fall
+ *  back to the economical per-turn-end cadence. */
+const KICKSTART_DELAY_MS = 2_000;
 
 export interface CurrentTaskOptions {
   store: ClaudeStore;
@@ -44,6 +48,8 @@ export interface CurrentTaskOptions {
   claudeBin?: string;
   /** model alias for the observer (defaults to "haiku"). */
   model?: string;
+  /** delay before the one-time kickstart summary (default 2000ms; tests pass 0). */
+  kickstartDelayMs?: number;
   /** test seam: replace the whole summarizer (skips both LLM and spawn). */
   summarizeFn?: (transcript: string, cwd: string) => Promise<string | null>;
 }
@@ -53,7 +59,11 @@ export class CurrentTaskSummarizer {
   /** messageCount last summarized per session — skip when nothing new arrived */
   private readonly lastCount = new Map<string, number>();
   private readonly inFlight = new Set<string>();
+  /** sessions whose one-time "kickstart" summary has already been scheduled */
+  private readonly kicked = new Set<string>();
+  private readonly kickTimers = new Map<string, NodeJS.Timeout>();
   private unsubscribe: (() => void) | null = null;
+  private unsubDriving: (() => void) | null = null;
 
   constructor(private readonly opts: CurrentTaskOptions) {}
 
@@ -70,14 +80,36 @@ export class CurrentTaskSummarizer {
 
   start(): void {
     if (this.unsubscribe) return;
+    // economical path: re-summarize when a turn finishes
     this.unsubscribe = this.opts.bus.on("claude:drive_done", (sessionId) => {
       void this.summarize(sessionId);
+    });
+    // fast first title: the first time a session starts running, summarize once soon
+    // (don't wait for the whole turn). Subsequent turns use drive_done only.
+    this.unsubDriving = this.opts.bus.on("claude:driving", (sessionId, driving) => {
+      if (driving) this.kickstart(sessionId);
     });
   }
 
   stop(): void {
     this.unsubscribe?.();
     this.unsubscribe = null;
+    this.unsubDriving?.();
+    this.unsubDriving = null;
+    for (const t of this.kickTimers.values()) clearTimeout(t);
+    this.kickTimers.clear();
+  }
+
+  /** One-time early summary when a session first starts running. */
+  private kickstart(sessionId: string): void {
+    if (this.kicked.has(sessionId) || this.summaries.has(sessionId)) return;
+    this.kicked.add(sessionId);
+    const t = setTimeout(() => {
+      this.kickTimers.delete(sessionId);
+      void this.summarize(sessionId);
+    }, this.opts.kickstartDelayMs ?? KICKSTART_DELAY_MS);
+    t.unref?.();
+    this.kickTimers.set(sessionId, t);
   }
 
   private async summarize(sessionId: string): Promise<void> {
