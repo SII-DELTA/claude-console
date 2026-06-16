@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import type { Bus } from "./bus.js";
 import type { ClaudeStore } from "./claude-store.js";
+import type { LLMClient } from "./llm-client.js";
 import type { ClaudeMessage } from "@mac/shared";
 
 /**
@@ -36,11 +37,13 @@ const SPAWN_TIMEOUT_MS = 25_000;
 export interface CurrentTaskOptions {
   store: ClaudeStore;
   bus: Bus;
+  /** Optional third-party OpenAI-compatible LLM — tried FIRST; falls back to Haiku. */
+  llm?: LLMClient | null;
   /** path to the claude binary (defaults to CLAUDE_BIN / "claude"). */
   claudeBin?: string;
   /** model alias for the observer (defaults to "haiku"). */
   model?: string;
-  /** test seam: replace the spawn-based summarizer. */
+  /** test seam: replace the whole summarizer (skips both LLM and spawn). */
   summarizeFn?: (transcript: string, cwd: string) => Promise<string | null>;
 }
 
@@ -86,8 +89,7 @@ export class CurrentTaskSummarizer {
     if (!transcript) return;
     this.inFlight.add(sessionId);
     try {
-      const fn = this.opts.summarizeFn ?? ((t, c) => this.spawnSummary(t, c));
-      const label = await fn(transcript, detail.session.cwd);
+      const label = await this.runSummary(transcript, detail.session.cwd);
       this.lastCount.set(sessionId, detail.session.messageCount);
       const clean = sanitize(label);
       if (clean && clean !== this.summaries.get(sessionId)) {
@@ -100,6 +102,27 @@ export class CurrentTaskSummarizer {
     } finally {
       this.inFlight.delete(sessionId);
     }
+  }
+
+  /** Pick a summary source: test seam → third-party LLM (if ready) → Haiku CLI. */
+  private async runSummary(transcript: string, cwd: string): Promise<string | null> {
+    if (this.opts.summarizeFn) return this.opts.summarizeFn(transcript, cwd);
+    const llm = this.opts.llm;
+    if (llm?.ready()) {
+      try {
+        return await llm.chat(
+          [
+            { role: "system", content: INSTRUCTION },
+            { role: "user", content: transcript },
+          ],
+          { temperature: 0.2, maxTokens: 64, thinking: false },
+        );
+      } catch (e) {
+        // API down / bad key / timeout → fall back to Haiku, never leave it blank
+        console.warn(`[current-task] LLM API 失败，回退 Haiku：${e instanceof Error ? e.message : e}`);
+      }
+    }
+    return this.spawnSummary(transcript, cwd);
   }
 
   /** One-shot `claude -p` print call (reads transcript from stdin). */

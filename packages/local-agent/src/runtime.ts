@@ -11,6 +11,7 @@ import { buildHttpApp } from "./http-server.js";
 import { ClaudeStore } from "./claude-store.js";
 import { ClaudeDriver } from "./claude-driver.js";
 import { CurrentTaskSummarizer } from "./current-task.js";
+import { resolveLLMFromEnv } from "./llm-client.js";
 import { SessionLiveness } from "./session-liveness.js";
 import { installLivenessHooks } from "./hooks-installer.js";
 import { PushManager } from "./push-manager.js";
@@ -117,7 +118,10 @@ export async function startAgent(config: AgentRuntimeConfig): Promise<AgentRunti
   // touches the driven session. Default on (env CURRENT_TASK_SUMMARY to disable).
   let currentTask: CurrentTaskSummarizer | null = null;
   if (CurrentTaskSummarizer.enabled()) {
-    currentTask = new CurrentTaskSummarizer({ store: claude, bus });
+    // optional third-party OpenAI-compatible API (LLM_API_*); falls back to Haiku
+    const llm = resolveLLMFromEnv();
+    if (llm) console.log(`[agent] 当前任务摘要优先用 LLM API：${llm.describe()}（失败回退 Haiku）`);
+    currentTask = new CurrentTaskSummarizer({ store: claude, bus, llm });
     claude.setCurrentTaskPredicate((id) => currentTask?.get(id));
     currentTask.start();
   }
