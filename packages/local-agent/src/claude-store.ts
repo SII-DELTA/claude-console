@@ -67,9 +67,7 @@ export class ClaudeStore {
     this.workspaceRoot = workspaceRoot;
     this.workspaceId = workspaceId;
     this.activeDir = null;
-    if (this.watcher) {
-      void this.restart();
-    }
+    // watcher covers the whole projects root → no restart needed on workspace change
   }
 
   /** Lets the runtime tell us which sessions our own driver currently owns. */
@@ -157,7 +155,7 @@ export class ClaudeStore {
     this.activeDir = dir;
     this.workspaceRoot = meta.cwd; // new sessions land in the real project cwd
     this.workspaceId = dir;
-    if (this.watcher) await this.restart();
+    // watcher already covers all projects → no restart needed
     return meta;
   }
 
@@ -211,6 +209,28 @@ export class ClaudeStore {
     return sessions
       .filter((s): s is ClaudeSession => !!s && s.messageCount > 0)
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  /** List sessions across ALL projects (dashboard overview; meta-only). */
+  async listAllSessions(): Promise<ClaudeSession[]> {
+    const files = await this.allSessionFiles();
+    const sessions = await Promise.all(files.map((f) => this.readSessionMeta(f)));
+    return sessions
+      .filter((s): s is ClaudeSession => !!s && s.messageCount > 0)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  /** Absolute paths of every session jsonl under every project dir. */
+  private async allSessionFiles(): Promise<string[]> {
+    const dirs = await safeListDirs(this.projectsRoot);
+    const out: string[] = [];
+    for (const d of dirs) {
+      const full = join(this.projectsRoot, d);
+      for (const f of await safeList(full)) {
+        if (f.endsWith(".jsonl")) out.push(join(full, f));
+      }
+    }
+    return out;
   }
 
   async getSession(
@@ -315,19 +335,20 @@ export class ClaudeStore {
 
   async start(): Promise<void> {
     if (this.watcher) return;
-    const dir = this.projectDir();
-    await fs.mkdir(dir, { recursive: true }).catch(() => {});
+    // Watch the WHOLE projects root (depth 1) so the dashboard's cross-project
+    // overview updates live, not just the active project. onFileChanged reads meta
+    // by file path, so it's project-agnostic; detail/driver paths still scope to the
+    // active project via projectDir().
+    const root = this.projectsRoot;
+    await fs.mkdir(root, { recursive: true }).catch(() => {});
     // seed offsets to current file sizes so we only stream *new* lines
-    for (const f of await safeList(dir)) {
-      if (f.endsWith(".jsonl")) {
-        const p = join(dir, f);
-        this.offsets.set(p, (await safeSize(p)) ?? 0);
-      }
+    for (const p of await this.allSessionFiles()) {
+      this.offsets.set(p, (await safeSize(p)) ?? 0);
     }
-    // chokidar v4 dropped glob support — watch the dir and filter in handlers.
-    this.watcher = chokidar.watch(dir, {
+    // chokidar v4 dropped glob support — watch the root and filter in handlers.
+    this.watcher = chokidar.watch(root, {
       ignoreInitial: true,
-      depth: 0,
+      depth: 1,
       awaitWriteFinish: { stabilityThreshold: 80, pollInterval: 30 },
     });
     this.watcher.on("add", (p) => {
@@ -371,12 +392,6 @@ export class ClaudeStore {
     const meta = await this.readSessionMeta(file);
     if (meta) this.bus?.emit("claude:session_updated", meta);
     void id;
-  }
-
-  private async restart(): Promise<void> {
-    await this.stop();
-    this.offsets.clear();
-    await this.start();
   }
 
   async stop(): Promise<void> {

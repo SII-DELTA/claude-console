@@ -211,17 +211,98 @@ function DoneRow({ s, onOpen }: { s: ClaudeSession; onOpen: (id: string) => void
   );
 }
 
-/* ── 快速切换项目 chip ─────────────────────────────────────────────── */
-function ProjectChip({ p, onSwitch }: { p: ClaudeProject; onSwitch: (dir: string) => void }) {
+/* ── 顶部项目切换栏（聚焦 + 活动徽章 + 搜索）────────────────────────── */
+function PillBadges({ run, need }: { run: number; need: number }) {
+  if (!run && !need) return null;
   return (
-    <button onClick={() => onSwitch(p.dir)} className="flex w-44 shrink-0 items-center gap-2 rounded-xl border border-line bg-bg-alt px-3 py-2.5 text-left transition-colors hover:border-accent/50">
-      <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-bg text-ink-dim"><TypeIcon name={p.name} size={16} /></div>
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-[12px] font-medium text-ink">{p.name}</div>
-        <div className="text-[10px] text-ink-faint">{p.sessionCount} 个会话</div>
-      </div>
-      {p.liveCount > 0 && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-success" />}
+    <span className="ml-1 flex shrink-0 items-center gap-1">
+      {need > 0 && (
+        <span className="rounded-full bg-accent/20 px-1.5 text-[10px] font-medium text-accent">{need}</span>
+      )}
+      {run > 0 && (
+        <span className="flex items-center gap-0.5 text-[10px] text-success">
+          <span className="h-1.5 w-1.5 rounded-full bg-success" />
+          {run}
+        </span>
+      )}
+    </span>
+  );
+}
+
+function Pill({
+  label,
+  active,
+  run,
+  need,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  run: number;
+  need: number;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex shrink-0 items-center whitespace-nowrap rounded-full border px-3 py-1.5 text-[12px] transition-colors ${
+        active ? "border-accent bg-accent/15 text-accent" : "border-line bg-bg-alt text-ink-dim hover:border-accent/40"
+      }`}
+    >
+      <span className="max-w-[140px] truncate font-medium">{label}</span>
+      <PillBadges run={run} need={need} />
     </button>
+  );
+}
+
+function ProjectBar({
+  projects,
+  focus,
+  onFocus,
+  statByCwd,
+  totalRun,
+  totalNeed,
+}: {
+  projects: ClaudeProject[];
+  focus: string | null;
+  onFocus: (dir: string | null) => void;
+  statByCwd: Map<string, { run: number; need: number }>;
+  totalRun: number;
+  totalNeed: number;
+}) {
+  const [q, setQ] = useState("");
+  const searchable = projects.length > 6;
+  const list = q
+    ? projects.filter((p) => p.name.toLowerCase().includes(q.toLowerCase()))
+    : projects;
+  if (projects.length === 0) return null;
+  return (
+    <div className="sticky top-0 z-10 border-b border-line bg-bg/95 px-3 py-2 backdrop-blur">
+      {searchable && (
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="搜索项目…"
+          className="mb-2 w-full rounded-lg border border-line bg-bg-alt px-2.5 py-1.5 text-[12px] text-ink outline-none placeholder:text-ink-faint focus:border-accent/50"
+        />
+      )}
+      <div className="flex gap-1.5 overflow-x-auto pb-0.5 scroll-thin">
+        <Pill label="全部" active={focus == null} run={totalRun} need={totalNeed} onClick={() => onFocus(null)} />
+        {list.map((p) => {
+          const st = statByCwd.get(p.cwd) ?? { run: 0, need: 0 };
+          return (
+            <Pill
+              key={p.dir}
+              label={p.name}
+              active={focus === p.dir}
+              run={st.run}
+              need={st.need}
+              onClick={() => onFocus(p.dir)}
+            />
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -238,15 +319,19 @@ function SectionHead({ title, count, color, right }: { title: string; count: num
 export function Dashboard({
   sessions,
   projects,
+  focus,
+  onFocus,
   onOpen,
-  onSwitchProject,
   onShowAll,
   onIgnore,
 }: {
+  /** ALL sessions across projects (overview); filtered locally by `focus`. */
   sessions: ClaudeSession[];
   projects: ClaudeProject[];
+  /** focused project dir, or null for the all-projects overview */
+  focus: string | null;
+  onFocus: (dir: string | null) => void;
   onOpen: (id: string) => void;
-  onSwitchProject: (dir: string) => void;
   onShowAll: () => void;
   /** swipe-to-ignore an attention card (e.g. dismiss the pending question) */
   onIgnore: (id: string) => void;
@@ -259,6 +344,10 @@ export function Dashboard({
     onIgnore(id);
   }
 
+  // Focus = look at one project only (its cwd); null = all-projects overview.
+  const focusCwd = focus ? projects.find((p) => p.dir === focus)?.cwd : undefined;
+  const view = focusCwd ? sessions.filter((s) => s.cwd === focusCwd) : sessions;
+
   const attentionOf = (s: ClaudeSession): AttKind | null => {
     if (ignored.has(s.id)) return null;
     if (s.attention === "approval") return "approval";
@@ -268,13 +357,43 @@ export function Dashboard({
     return null;
   };
 
-  const needs = sessions.map((s) => ({ s, k: attentionOf(s) })).filter((x): x is { s: ClaudeSession; k: AttKind } => x.k != null);
+  const needs = view.map((s) => ({ s, k: attentionOf(s) })).filter((x): x is { s: ClaudeSession; k: AttKind } => x.k != null);
   const needIds = new Set(needs.map((x) => x.s.id));
   // "正在运行" = a turn is actively in flight (hook ∪ our driver). NOT isLive — that
   // also counts idle-but-attached sessions (e.g. many open VSCode tabs), over-reporting.
-  const running = sessions.filter((s) => s.driving && !needIds.has(s.id));
+  const running = view.filter((s) => s.driving && !needIds.has(s.id));
   const runIds = new Set(running.map((s) => s.id));
-  const recentDone = sessions.filter((s) => !needIds.has(s.id) && !runIds.has(s.id)).slice(0, RECENT_LIMIT);
+  const recentDone = view.filter((s) => !needIds.has(s.id) && !runIds.has(s.id)).slice(0, RECENT_LIMIT);
+
+  // Per-project activity badges (from ALL sessions) so you can triage across projects
+  // without leaving the focused view.
+  const statByCwd = new Map<string, { run: number; need: number }>();
+  for (const s of sessions) {
+    const st = statByCwd.get(s.cwd) ?? { run: 0, need: 0 };
+    const need =
+      s.attention === "approval" || s.attention === "question" || s.attention === "error";
+    if (need) st.need += 1;
+    else if (s.driving) st.run += 1;
+    statByCwd.set(s.cwd, st);
+  }
+  const totalRun = [...statByCwd.values()].reduce((a, b) => a + b.run, 0);
+  const totalNeed = [...statByCwd.values()].reduce((a, b) => a + b.need, 0);
+
+  // swipe the body left/right to move focus across [全部, ...projects]
+  const order: (string | null)[] = [null, ...projects.map((p) => p.dir)];
+  const swipeStart = { x: 0, y: 0 };
+  function onSwipeStart(e: React.TouchEvent) {
+    swipeStart.x = e.touches[0]!.clientX;
+    swipeStart.y = e.touches[0]!.clientY;
+  }
+  function onSwipeEnd(e: React.TouchEvent) {
+    const dx = e.changedTouches[0]!.clientX - swipeStart.x;
+    const dy = e.changedTouches[0]!.clientY - swipeStart.y;
+    if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    const i = order.indexOf(focus);
+    const next = dx < 0 ? i + 1 : i - 1;
+    if (next >= 0 && next < order.length) onFocus(order[next]!);
+  }
 
   if (sessions.length === 0 && projects.length === 0) {
     return (
@@ -286,7 +405,23 @@ export function Dashboard({
   }
 
   return (
-    <div className="h-full overflow-y-auto overscroll-contain px-4 py-4 scroll-thin">
+    <div className="flex h-full flex-col">
+      <ProjectBar
+        projects={projects}
+        focus={focus}
+        onFocus={onFocus}
+        statByCwd={statByCwd}
+        totalRun={totalRun}
+        totalNeed={totalNeed}
+      />
+      <div
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 scroll-thin"
+        onTouchStart={onSwipeStart}
+        onTouchEnd={onSwipeEnd}
+      >
+        {view.length === 0 && (
+          <p className="mt-10 text-center text-[13px] text-ink-faint">该项目暂无会话</p>
+        )}
       {needs.length > 0 && (
         <section className="mb-5">
           <SectionHead title="需要你处理" count={needs.length} color="text-accent" />
@@ -324,16 +459,7 @@ export function Dashboard({
         </section>
       )}
 
-      {projects.length > 0 && (
-        <section className="mb-2">
-          <SectionHead title="快速切换项目" count={projects.length} color="text-ink-dim" />
-          <div className="flex gap-2 overflow-x-auto pb-1 scroll-thin">
-            {projects.map((p) => (
-              <ProjectChip key={p.dir} p={p} onSwitch={onSwitchProject} />
-            ))}
-          </div>
-        </section>
-      )}
+      </div>
     </div>
   );
 }

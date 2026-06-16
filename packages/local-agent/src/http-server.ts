@@ -254,6 +254,11 @@ export async function buildHttpApp(opts: BuildHttpOptions): Promise<FastifyInsta
     return { sessions: await opts.claude.listSessions() };
   });
 
+  // Cross-project overview (dashboard default): sessions from ALL projects, meta-only.
+  app.get("/claude/sessions/all", async () => {
+    return { sessions: await opts.claude.listAllSessions() };
+  });
+
   app.post("/claude/sessions", async (req, reply) => {
     const parsed = ClaudeCreateBodySchema.safeParse(req.body);
     if (!parsed.success) {

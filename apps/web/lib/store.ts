@@ -99,6 +99,10 @@ interface AppState {
   projects: ClaudeProject[];
   activeProjectDir: string | null;
   sessions: ClaudeSession[];
+  /** sessions across ALL projects, for the dashboard overview (meta-only) */
+  allSessions: ClaudeSession[];
+  /** dashboard project focus: null = all projects overview; else filter to this dir */
+  dashboardFocus: string | null;
   selectedId: string | null;
   /** which bottom tab is active on mobile (home view when no session is open) */
   mobileTab: MobileTab;
@@ -143,9 +147,13 @@ interface AppState {
   handleVisible: () => void;
   loadProjects: () => Promise<void>;
   switchProject: (dir: string) => Promise<void>;
+  /** set the dashboard's project focus (null = all-projects overview) */
+  setDashboardFocus: (dir: string | null) => void;
   /** restore project + session from the URL (?p=&s=) on first load */
   restoreFromUrl: () => Promise<void>;
   loadSessions: () => Promise<void>;
+  /** refresh the cross-project overview session list */
+  loadAllSessions: () => Promise<void>;
   selectSession: (id: string | null) => Promise<void>;
   /** load one older page of messages (prepended) for the selected session */
   loadEarlier: () => Promise<void>;
@@ -203,6 +211,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   projects: [],
   activeProjectDir: null,
   sessions: [],
+  allSessions: [],
+  dashboardFocus: null,
   selectedId: null,
   mobileTab: "dashboard",
   messages: [],
@@ -241,6 +251,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       ws: null,
       wsConnected: false,
       sessions: [],
+      allSessions: [],
       selectedId: null,
       messages: [],
       historyOffset: 0,
@@ -252,6 +263,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       get().connectWs();
       void get().loadProjects();
       void get().loadSessions();
+      void get().loadAllSessions();
     }
   },
 
@@ -362,6 +374,25 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
       set({ error: describeError(err) });
     }
+  },
+
+  async loadAllSessions() {
+    const api = get().api;
+    if (!api) return;
+    try {
+      const res = await api.claudeAllSessions();
+      set({ allSessions: res.sessions });
+    } catch (err) {
+      if (isUnauthorizedError(err)) {
+        get().setConnection(null);
+        return;
+      }
+      // overview is best-effort; don't surface a blocking error
+    }
+  },
+
+  setDashboardFocus(dir) {
+    set({ dashboardFocus: dir });
   },
 
   async selectSession(id) {
@@ -671,7 +702,10 @@ function handleServerMessage(
 ): void {
   switch (msg.type) {
     case "server:claude_session_updated": {
-      set({ sessions: upsertSession(get().sessions, msg.session) });
+      set({
+        sessions: upsertSession(get().sessions, msg.session),
+        allSessions: upsertSession(get().allSessions, msg.session),
+      });
       // Authoritative reconciliation: the session JSONL drives the "question"
       // attention flag (cleared once a non-error answer lands). If it's no longer
       // a question, drop any lingering picker we may hold — covers a missed
@@ -690,11 +724,9 @@ function handleServerMessage(
     case "server:claude_driving": {
       // authoritative real-time run state (hook ∪ our driver). Patch the field so the
       // dashboard "正在运行" and the chat loading indicator update without a poll.
-      set({
-        sessions: get().sessions.map((s) =>
-          s.id === msg.sessionId ? { ...s, driving: msg.driving } : s,
-        ),
-      });
+      const patchDriving = (list: ClaudeSession[]) =>
+        list.map((s) => (s.id === msg.sessionId ? { ...s, driving: msg.driving } : s));
+      set({ sessions: patchDriving(get().sessions), allSessions: patchDriving(get().allSessions) });
       if (msg.driving) markRead(set, get, msg.sessionId); // agent started → "已读·处理中"
       break;
     }

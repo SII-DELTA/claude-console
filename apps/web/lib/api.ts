@@ -120,6 +120,11 @@ export class ApiClient {
     return this.request("GET", "/claude/sessions");
   }
 
+  /** Sessions across all projects (dashboard overview). */
+  claudeAllSessions(): Promise<{ sessions: ClaudeSession[] }> {
+    return this.request("GET", "/claude/sessions/all");
+  }
+
   claudeSession(
     id: string,
     opts?: { limit?: number; before?: number },

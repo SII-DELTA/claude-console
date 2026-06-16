@@ -53,6 +53,10 @@ function Console() {
     loadProjects,
     restoreFromUrl,
     sessions,
+    allSessions,
+    dashboardFocus,
+    setDashboardFocus,
+    loadAllSessions,
     selectedId,
     messages,
     historyOffset,
@@ -160,10 +164,14 @@ function Console() {
       await loadProjects();
       await restoreFromUrl();
       await loadSessions();
+      await loadAllSessions();
     })();
-    const t = setInterval(() => void loadSessions(), 20000);
+    const t = setInterval(() => {
+      void loadSessions();
+      void loadAllSessions();
+    }, 20000);
     return () => clearInterval(t);
-  }, [loadProjects, restoreFromUrl, loadSessions]);
+  }, [loadProjects, restoreFromUrl, loadSessions, loadAllSessions]);
 
   // Jump to the latest when switching sessions; otherwise follow new content
   // only when already near the bottom (instant — smooth-per-token is janky).
@@ -239,6 +247,15 @@ function Console() {
     void selectSession(id);
   }
 
+  // Open a session from the cross-project overview: if it belongs to a different
+  // project than the active one, switch project first so detail/driver resolve it.
+  async function openFromDashboard(id: string) {
+    const s = allSessions.find((x) => x.id === id) ?? sessions.find((x) => x.id === id);
+    const proj = s ? projects.find((p) => p.cwd === s.cwd) : undefined;
+    if (proj && proj.dir !== activeProjectDir) await switchProject(proj.dir);
+    void selectSession(id);
+  }
+
   function startNew() {
     void selectSession(null);
     setComposeNew(true); // mobile: open the new-session detail view
@@ -286,10 +303,11 @@ function Console() {
           <div className="min-h-0 flex-1">
             {mobileTab === "dashboard" && (
               <Dashboard
-                sessions={sessions}
+                sessions={allSessions}
                 projects={projects}
-                onOpen={selectAndClose}
-                onSwitchProject={(dir) => void switchProject(dir)}
+                focus={dashboardFocus}
+                onFocus={setDashboardFocus}
+                onOpen={(id) => void openFromDashboard(id)}
                 onShowAll={() => setMobileTab("sessions")}
                 onIgnore={(id) => void dismissQuestion(id)}
               />
