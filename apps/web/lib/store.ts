@@ -128,6 +128,8 @@ interface AppState {
   allSessions: ClaudeSession[];
   /** dashboard project focus: null = all projects overview; else filter to this dir */
   dashboardFocus: string | null;
+  /** sessions-tab project focus: null = all projects; else filter to this dir */
+  sessionsFocus: string | null;
   selectedId: string | null;
   /** which bottom tab is active on mobile (home view when no session is open) */
   mobileTab: MobileTab;
@@ -180,6 +182,8 @@ interface AppState {
   switchProject: (dir: string) => Promise<void>;
   /** set the dashboard's project focus (null = all-projects overview) */
   setDashboardFocus: (dir: string | null) => void;
+  /** set the sessions-tab project focus (null = all projects) */
+  setSessionsFocus: (dir: string | null) => void;
   /** project management: hide / unhide a project, or add (pin) one by cwd */
   hideProject: (dir: string) => Promise<void>;
   unhideProject: (dir: string) => Promise<void>;
@@ -248,6 +252,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   sessions: [],
   allSessions: [],
   dashboardFocus: null,
+  sessionsFocus: null,
   selectedId: null,
   mobileTab: "dashboard",
   messages: [],
@@ -449,6 +454,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setDashboardFocus(dir) {
     set({ dashboardFocus: dir });
+  },
+
+  setSessionsFocus(dir) {
+    set({ sessionsFocus: dir });
   },
 
   async hideProject(dir) {

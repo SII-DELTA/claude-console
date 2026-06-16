@@ -17,6 +17,7 @@ import { BottomTabs } from "../components/BottomTabs";
 import { Dashboard } from "../components/Dashboard";
 import { SettingsPage } from "../components/SettingsPage";
 import { ProjectsPage } from "../components/ProjectsPage";
+import { SessionsPage } from "../components/SessionsPage";
 import { notify } from "../lib/notify";
 import { onPushOpenSession } from "../lib/push";
 import { useEdgeSwipeBack } from "../lib/useEdgeSwipeBack";
@@ -330,23 +331,13 @@ function Console() {
               />
             )}
             {mobileTab === "sessions" && (
-              <div className="flex h-full flex-col">
-                <ProjectPicker
-                  projects={projects}
-                  activeProjectDir={activeProjectDir}
-                  fallbackName={connection?.workspaceName}
-                  onSwitch={(dir) => void switchProject(dir)}
-                />
-                <div className="min-h-0 flex-1">
-                  <SessionList
-                    sessions={sessions}
-                    selectedId={selectedId}
-                    onSelect={selectAndClose}
-                    onNew={startNew}
-                    onRefresh={loadSessions}
-                  />
-                </div>
-              </div>
+              <SessionsPage
+                onSelect={selectAndClose}
+                onNewInProject={(dir) => {
+                  void switchProject(dir);
+                  startNew();
+                }}
+              />
             )}
             {mobileTab === "settings" && (
               <SettingsPage

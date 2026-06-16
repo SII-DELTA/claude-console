@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import type { ClaudeProject, ClaudeSession } from "@mac/shared";
+import { ProjectBar, projectStats } from "./ProjectBar";
 
 const RECENT_DONE_MS = 60 * 60 * 1000; // a "done" session newer than this is "awaiting next step"
 const RECENT_LIMIT = 5;
@@ -204,101 +205,6 @@ function DoneRow({ s, onOpen }: { s: ClaudeSession; onOpen: (id: string) => void
   );
 }
 
-/* ── 顶部项目切换栏（聚焦 + 活动徽章 + 搜索）────────────────────────── */
-function PillBadges({ run, need }: { run: number; need: number }) {
-  if (!run && !need) return null;
-  return (
-    <span className="ml-1 flex shrink-0 items-center gap-1">
-      {need > 0 && (
-        <span className="rounded-full bg-accent/20 px-1.5 text-[10px] font-medium text-accent">{need}</span>
-      )}
-      {run > 0 && (
-        <span className="flex items-center gap-0.5 text-[10px] text-success">
-          <span className="h-1.5 w-1.5 rounded-full bg-success" />
-          {run}
-        </span>
-      )}
-    </span>
-  );
-}
-
-function Pill({
-  label,
-  active,
-  run,
-  need,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  run: number;
-  need: number;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={`flex shrink-0 items-center whitespace-nowrap rounded-full border px-3 py-1.5 text-[12px] transition-colors ${
-        active ? "border-accent bg-accent/15 text-accent" : "border-line bg-bg-alt text-ink-dim hover:border-accent/40"
-      }`}
-    >
-      <span className="max-w-[140px] truncate font-medium">{label}</span>
-      <PillBadges run={run} need={need} />
-    </button>
-  );
-}
-
-function ProjectBar({
-  projects,
-  focus,
-  onFocus,
-  statByCwd,
-  totalRun,
-  totalNeed,
-}: {
-  projects: ClaudeProject[];
-  focus: string | null;
-  onFocus: (dir: string | null) => void;
-  statByCwd: Map<string, { run: number; need: number }>;
-  totalRun: number;
-  totalNeed: number;
-}) {
-  const [q, setQ] = useState("");
-  const searchable = projects.length > 6;
-  const list = q
-    ? projects.filter((p) => p.name.toLowerCase().includes(q.toLowerCase()))
-    : projects;
-  if (projects.length === 0) return null;
-  return (
-    <div className="sticky top-0 z-10 border-b border-line bg-bg/95 px-3 py-2 backdrop-blur">
-      {searchable && (
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="搜索项目…"
-          className="mb-2 w-full rounded-lg border border-line bg-bg-alt px-2.5 py-1.5 text-[12px] text-ink outline-none placeholder:text-ink-faint focus:border-accent/50"
-        />
-      )}
-      <div className="flex gap-1.5 overflow-x-auto pb-0.5 scroll-thin">
-        <Pill label="全部" active={focus == null} run={totalRun} need={totalNeed} onClick={() => onFocus(null)} />
-        {list.map((p) => {
-          const st = statByCwd.get(p.cwd) ?? { run: 0, need: 0 };
-          return (
-            <Pill
-              key={p.dir}
-              label={p.name}
-              active={focus === p.dir}
-              run={st.run}
-              need={st.need}
-              onClick={() => onFocus(p.dir)}
-            />
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 function SectionHead({ title, count, color, right }: { title: string; count: number; color: string; right?: React.ReactNode }) {
   return (
     <div className="mb-2 flex items-center gap-2">
@@ -358,19 +264,8 @@ export function Dashboard({
   const runIds = new Set(running.map((s) => s.id));
   const recentDone = view.filter((s) => !needIds.has(s.id) && !runIds.has(s.id)).slice(0, RECENT_LIMIT);
 
-  // Per-project activity badges (from ALL sessions) so you can triage across projects
-  // without leaving the focused view.
-  const statByCwd = new Map<string, { run: number; need: number }>();
-  for (const s of sessions) {
-    const st = statByCwd.get(s.cwd) ?? { run: 0, need: 0 };
-    const need =
-      s.attention === "approval" || s.attention === "question" || s.attention === "error";
-    if (need) st.need += 1;
-    else if (s.driving) st.run += 1;
-    statByCwd.set(s.cwd, st);
-  }
-  const totalRun = [...statByCwd.values()].reduce((a, b) => a + b.run, 0);
-  const totalNeed = [...statByCwd.values()].reduce((a, b) => a + b.need, 0);
+  // Per-project activity badges (from ALL sessions) so you can triage across projects.
+  const stats = projectStats(sessions);
 
   // swipe the body left/right to move focus across [全部, ...projects]
   const order: (string | null)[] = [null, ...projects.map((p) => p.dir)];
@@ -399,14 +294,7 @@ export function Dashboard({
 
   return (
     <div className="flex h-full flex-col">
-      <ProjectBar
-        projects={projects}
-        focus={focus}
-        onFocus={onFocus}
-        statByCwd={statByCwd}
-        totalRun={totalRun}
-        totalNeed={totalNeed}
-      />
+      <ProjectBar projects={projects} focus={focus} onFocus={onFocus} stats={stats} />
       <div
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 scroll-thin"
         onTouchStart={onSwipeStart}
