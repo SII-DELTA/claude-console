@@ -122,6 +122,15 @@ interface AppState {
     /** false ⇒ recovered from history (process gone); answering will resume the session. */
     live?: boolean;
   } | null;
+  /** A non-AskUserQuestion tool awaiting the user's allow/deny decision. */
+  toolApproval: {
+    sessionId: string;
+    requestId: string;
+    toolName: string;
+    summary: string;
+    /** false ⇒ recovered from store (process gone); only dismissable, not answerable. */
+    live?: boolean;
+  } | null;
   /** Delivery/read receipt for the last sent user message (方案 B). */
   sendStatus: { sessionId: string | null; messageId: string; state: SendState } | null;
   error: string | null;
@@ -146,6 +155,8 @@ interface AppState {
   interrupt: () => Promise<void>;
   /** Answer the pending interactive permission (方案 B). */
   answerPermission: (answers: Record<string, string | string[]>) => Promise<void>;
+  /** Answer the pending tool approval (allow once / deny). */
+  answerToolApproval: (decision: "allow" | "deny") => Promise<void>;
   /** Pull any pending interactive permission for a session (recover after reload/restart). */
   refreshPendingPermission: (sessionId: string) => Promise<void>;
   /** Dismiss a session's lingering question(s) without answering (clears the badge). */
@@ -204,6 +215,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   permissionMode: loadPermissionMode(),
   rateLimit: null,
   pendingPermission: null,
+  toolApproval: null,
   sendStatus: null,
   error: null,
 
@@ -354,8 +366,8 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   async selectSession(id) {
     if (prewarmTimer) clearTimeout(prewarmTimer);
-    // a pending picker belongs to the session we're leaving; drop it
-    set({ selectedId: id, stream: null, pendingPermission: null });
+    // a pending picker/approval belongs to the session we're leaving; drop it
+    set({ selectedId: id, stream: null, pendingPermission: null, toolApproval: null });
     syncUrl(get().activeProjectDir, id);
     if (!id) {
       set({ messages: [], historyOffset: 0, loadingEarlier: false });
@@ -514,12 +526,37 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ pendingPermission: null });
     try {
       await api.answerClaudePermission(p.sessionId, p.requestId, answers);
+      // surface the next pending ask (question or approval) if the turn has more
+      void get().refreshPendingPermission(p.sessionId);
     } catch (err) {
       // restore so the user can retry if the request was still pending
       if (isLiveConflict(err)) {
         // 409 = no longer pending (already answered / turn ended); stay dismissed
       } else {
         set({ pendingPermission: p, error: "提交选择失败，请重试" });
+      }
+    }
+  },
+
+  async answerToolApproval(decision) {
+    const api = get().api;
+    const p = get().toolApproval;
+    if (!api || !p) return;
+    // optimistic close; server emits a cancel + session_updated to reconcile all
+    // clients. For a recovered (process-gone) approval the server drops the stale
+    // durable row, so the "approval" badge clears everywhere — don't short-circuit.
+    set({ toolApproval: null });
+    try {
+      await api.answerClaudeToolApproval(p.sessionId, p.requestId, decision);
+      // a turn may have several tool calls awaiting approval at once; the earlier
+      // ones were overwritten in the single-slot UI. Pull the next one (if any) so
+      // the panel doesn't go blank while the turn is still blocked.
+      void get().refreshPendingPermission(p.sessionId);
+    } catch (err) {
+      if (isLiveConflict(err)) {
+        // 409 = no longer pending (already handled / turn ended); stay dismissed
+      } else {
+        set({ toolApproval: p, error: "提交失败，请重试" });
       }
     }
   },
@@ -585,6 +622,20 @@ export const useAppStore = create<AppState>((set, get) => ({
         // server says nothing pending → clear any stale local picker
         set({ pendingPermission: null });
       }
+      const firstApproval = res.approvals?.[0];
+      if (firstApproval) {
+        set({
+          toolApproval: {
+            sessionId,
+            requestId: firstApproval.requestId,
+            toolName: firstApproval.toolName,
+            summary: firstApproval.summary,
+            live: firstApproval.live,
+          },
+        });
+      } else if (get().toolApproval?.sessionId === sessionId) {
+        set({ toolApproval: null });
+      }
     } catch {
       /* recovery is best-effort; ignore failures */
     }
@@ -628,6 +679,11 @@ function handleServerMessage(
       const p = get().pendingPermission;
       if (p && p.sessionId === msg.session.id && msg.session.attention !== "question") {
         set({ pendingPermission: null });
+      }
+      // same reconciliation for tool approvals (attention drops to non-"approval")
+      const a = get().toolApproval;
+      if (a && a.sessionId === msg.session.id && msg.session.attention !== "approval") {
+        set({ toolApproval: null });
       }
       break;
     }
@@ -709,9 +765,26 @@ function handleServerMessage(
       }
       break;
     }
+    case "server:claude_tool_approval_request": {
+      notify("🔐 Claude 请求执行工具", get().sessions.find((s) => s.id === msg.sessionId)?.title);
+      if (msg.sessionId === get().selectedId) {
+        set({
+          toolApproval: {
+            sessionId: msg.sessionId,
+            requestId: msg.requestId,
+            toolName: msg.toolName,
+            summary: msg.summary,
+            live: true,
+          },
+        });
+      }
+      break;
+    }
     case "server:claude_permission_cancel": {
       const p = get().pendingPermission;
       if (p && p.requestId === msg.requestId) set({ pendingPermission: null });
+      const a = get().toolApproval;
+      if (a && a.requestId === msg.requestId) set({ toolApproval: null });
       break;
     }
     default:

@@ -52,13 +52,17 @@ export interface DeviceRecord extends PairedDevice {
   tokenHash: string;
 }
 
-/** A durable record of an AskUserQuestion awaiting the user's answer. */
+/** A durable record of a pending permission: an AskUserQuestion or a tool approval. */
 export interface PendingPermissionRecord {
   requestId: string;
   sessionId: string;
   toolName: string;
-  /** JSON-serializable questions payload (ClaudePermissionQuestion[]). */
+  /** "question" → AskUserQuestion picker; "approval" → allow/deny gate. */
+  kind?: "question" | "approval";
+  /** JSON-serializable questions payload (ClaudePermissionQuestion[]); [] for approvals. */
   questions: unknown;
+  /** Raw tool input for an approval (JSON), used to re-summarize on recovery. */
+  toolInput?: unknown;
   createdAt: string;
 }
 
@@ -66,7 +70,9 @@ interface RawPendingRow {
   requestId: string;
   sessionId: string;
   toolName: string;
+  kind: string | null;
   questions: string;
+  toolInput: string | null;
   createdAt: string;
 }
 
@@ -143,7 +149,9 @@ export class HistoryStore {
         requestId TEXT PRIMARY KEY,
         sessionId TEXT NOT NULL,
         toolName TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'question',
         questions TEXT NOT NULL,
+        toolInput TEXT,
         createdAt TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_pending_session ON pending_permissions(sessionId);
@@ -161,6 +169,16 @@ export class HistoryStore {
         createdAt TEXT NOT NULL
       );
     `);
+    // Tool-approval columns on a pre-existing pending_permissions table (guarded).
+    this.addColumnIfMissing("pending_permissions", "kind", "TEXT NOT NULL DEFAULT 'question'");
+    this.addColumnIfMissing("pending_permissions", "toolInput", "TEXT");
+  }
+
+  /** Add a column only if it doesn't already exist (sqlite has no IF NOT EXISTS for columns). */
+  private addColumnIfMissing(table: string, column: string, decl: string): void {
+    const cols = this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+    if (cols.some((c) => c.name === column)) return;
+    this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
   }
 
   /* ---------------- web push subscriptions ---------------- */
@@ -384,13 +402,28 @@ export class HistoryStore {
   savePendingPermission(rec: PendingPermissionRecord): void {
     this.db
       .prepare(
-        `INSERT INTO pending_permissions (requestId,sessionId,toolName,questions,createdAt)
-         VALUES (@requestId,@sessionId,@toolName,@questions,@createdAt)
+        `INSERT INTO pending_permissions (requestId,sessionId,toolName,kind,questions,toolInput,createdAt)
+         VALUES (@requestId,@sessionId,@toolName,@kind,@questions,@toolInput,@createdAt)
          ON CONFLICT(requestId) DO UPDATE SET
-           sessionId=excluded.sessionId, toolName=excluded.toolName,
-           questions=excluded.questions, createdAt=excluded.createdAt`,
+           sessionId=excluded.sessionId, toolName=excluded.toolName, kind=excluded.kind,
+           questions=excluded.questions, toolInput=excluded.toolInput, createdAt=excluded.createdAt`,
       )
-      .run({ ...rec, questions: JSON.stringify(rec.questions) });
+      .run({
+        ...rec,
+        kind: rec.kind ?? "question",
+        questions: JSON.stringify(rec.questions ?? []),
+        toolInput: rec.toolInput === undefined ? null : JSON.stringify(rec.toolInput),
+      });
+  }
+
+  /** True if the session has any persisted tool-approval awaiting a decision. */
+  hasPendingApproval(sessionId: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT 1 FROM pending_permissions WHERE sessionId=? AND kind='approval' LIMIT 1`,
+      )
+      .get(sessionId);
+    return !!row;
   }
 
   deletePendingPermission(requestId: string): void {
@@ -442,7 +475,9 @@ export class HistoryStore {
       requestId: r.requestId,
       sessionId: r.sessionId,
       toolName: r.toolName,
+      kind: r.kind === "approval" ? "approval" : "question",
       questions: safeParse(r.questions),
+      toolInput: r.toolInput == null ? undefined : safeParse(r.toolInput),
       createdAt: r.createdAt,
     };
   }

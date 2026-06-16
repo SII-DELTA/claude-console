@@ -46,6 +46,8 @@ export class ClaudeStore {
   /** predicates injected by the runtime: hook-derived liveness (any entrypoint). */
   private livenessBusyPredicate: ((id: string) => boolean) | null = null;
   private livenessAlivePredicate: ((id: string) => boolean) | null = null;
+  /** predicate injected by the runtime: does this session have a pending tool approval? */
+  private pendingApprovalPredicate: ((id: string) => boolean) | null = null;
   /** AskUserQuestion ids the user dismissed → excluded from the "question" attention */
   private dismissedQuestions = new Set<string>();
 
@@ -79,6 +81,11 @@ export class ClaudeStore {
   setLivenessPredicates(busy: (id: string) => boolean, alive: (id: string) => boolean): void {
     this.livenessBusyPredicate = busy;
     this.livenessAlivePredicate = alive;
+  }
+
+  /** Lets the runtime tell us which sessions have a pending tool approval (not in jsonl). */
+  setPendingApprovalPredicate(fn: (id: string) => boolean): void {
+    this.pendingApprovalPredicate = fn;
   }
 
   /** Seed the dismissed-question set (from durable storage at startup). */
@@ -275,7 +282,11 @@ export class ClaudeStore {
       driving,
       drivenByAgent,
       preview: acc.firstUserText?.slice(0, 140),
-      attention: deriveAttention(acc, isLive, this.dismissedQuestions),
+      // a pending tool approval (runtime control-protocol state, not in the jsonl)
+      // takes precedence; otherwise derive question/done/error from the jsonl.
+      attention: (this.pendingApprovalPredicate?.(id) ?? false)
+        ? "approval"
+        : deriveAttention(acc, isLive, this.dismissedQuestions),
     };
   }
 

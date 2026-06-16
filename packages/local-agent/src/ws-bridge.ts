@@ -174,6 +174,15 @@ export class WsBridge {
           questions,
         }),
       ),
+      bus.on("claude:tool_approval_request", (sessionId, requestId, toolName, summary) =>
+        this.broadcast({
+          type: "server:claude_tool_approval_request",
+          sessionId,
+          requestId,
+          toolName,
+          summary,
+        }),
+      ),
       bus.on("claude:permission_cancel", (sessionId, requestId) =>
         this.broadcast({ type: "server:claude_permission_cancel", sessionId, requestId }),
       ),

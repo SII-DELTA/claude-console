@@ -12,38 +12,39 @@ export class SessionLiveError extends Error {
   }
 }
 
-/** Durable store for pending AskUserQuestion asks (so they survive restart). */
-export interface PendingPermissionStore {
-  savePendingPermission(rec: {
-    requestId: string;
-    sessionId: string;
-    toolName: string;
-    questions: unknown;
-    createdAt: string;
-  }): void;
-  deletePendingPermission(requestId: string): void;
-  deletePendingPermissionsBySession(sessionId: string): void;
-  getPendingPermission(requestId: string): {
-    requestId: string;
-    sessionId: string;
-    toolName: string;
-    questions: unknown;
-    createdAt: string;
-  } | null;
-  listPendingPermissions(sessionId: string): Array<{
-    requestId: string;
-    sessionId: string;
-    toolName: string;
-    questions: unknown;
-    createdAt: string;
-  }>;
+/** One persisted pending row (AskUserQuestion or tool approval). */
+interface PendingRecord {
+  requestId: string;
+  sessionId: string;
+  toolName: string;
+  kind?: "question" | "approval";
+  questions: unknown;
+  toolInput?: unknown;
+  createdAt: string;
 }
 
-/** One recoverable pending permission returned to clients. */
+/** Durable store for pending permission asks (so they survive restart). */
+export interface PendingPermissionStore {
+  savePendingPermission(rec: PendingRecord): void;
+  deletePendingPermission(requestId: string): void;
+  deletePendingPermissionsBySession(sessionId: string): void;
+  getPendingPermission(requestId: string): PendingRecord | null;
+  listPendingPermissions(sessionId: string): PendingRecord[];
+}
+
+/** One recoverable pending AskUserQuestion returned to clients. */
 export interface PendingPermissionView {
   requestId: string;
   toolName: string;
   questions: ClaudePermissionQuestion[];
+  live: boolean;
+}
+
+/** One recoverable pending tool approval (allow/deny) returned to clients. */
+export interface ToolApprovalView {
+  requestId: string;
+  toolName: string;
+  summary: string;
   live: boolean;
 }
 
@@ -57,8 +58,8 @@ interface WarmProc {
   busy: boolean;
   idle: NodeJS.Timeout | null;
   mode: string;
-  /** Interactive permission asks (can_use_tool) awaiting a client answer, by request_id. */
-  pending: Map<string, { input: unknown }>;
+  /** Interactive asks (can_use_tool) awaiting a client decision, by request_id. */
+  pending: Map<string, { input: unknown; toolName: string; kind: "question" | "approval" }>;
   /**
    * When set, the next AskUserQuestion can_use_tool in this process is
    * auto-answered with these answers instead of being surfaced — used to deliver
@@ -185,9 +186,10 @@ export class ClaudeDriver {
     // explicit abandon ⇒ drop any durable pending asks (don't resurface later)
     this.opts.pendingStore?.deletePendingPermissionsBySession(sessionId);
     const w = this.procs.get(sessionId);
-    if (!w) return false;
-    this.kill(sessionId);
-    return true;
+    if (w) this.kill(sessionId);
+    // rows were dropped above → re-derive so any "approval" badge clears now
+    void this.opts.store.refreshSession(sessionId);
+    return !!w;
   }
 
   /** True when a turn is actively in flight for the session. */
@@ -386,6 +388,7 @@ export class ClaudeDriver {
       if (w && rid && w.pending.delete(rid)) {
         this.opts.pendingStore?.deletePendingPermission(rid); // claude abandoned it
         this.opts.bus.emit("claude:permission_cancel", sessionId, rid);
+        void this.opts.store.refreshSession(sessionId); // clear any "approval" badge
         this.touch(sessionId);
       }
       return true;
@@ -430,7 +433,7 @@ export class ClaudeDriver {
         return true;
       }
       if (w) {
-        w.pending.set(rid, { input: req.input });
+        w.pending.set(rid, { input: req.input, toolName: "AskUserQuestion", kind: "question" });
         if (w.idle) clearTimeout(w.idle); // genuinely awaiting the user — don't reap
         w.idle = null;
       }
@@ -439,18 +442,81 @@ export class ClaudeDriver {
         requestId: rid,
         sessionId,
         toolName: "AskUserQuestion",
+        kind: "question",
         questions,
         createdAt: now(),
       });
       this.opts.bus.emit("claude:permission_request", sessionId, rid, "AskUserQuestion", questions);
       return true;
     }
-    // Any other tool that reached the ask path stays denied (see method doc).
-    this.respondPermissionDeny(
+    // Any other tool that reached the ask path → surface a generic allow/deny approval.
+    const toolName = req.tool_name ?? "工具";
+    const summary = summarizeToolInput(toolName, req.input);
+    const w = this.procs.get(sessionId);
+    if (w) {
+      w.pending.set(rid, { input: req.input, toolName, kind: "approval" });
+      if (w.idle) clearTimeout(w.idle); // awaiting the user — don't reap
+      w.idle = null;
+    }
+    this.opts.pendingStore?.savePendingPermission({
+      requestId: rid,
       sessionId,
-      rid,
-      `${req.tool_name} 需要交互式批准，Web 控制台暂不支持该工具的审批。`,
-    );
+      toolName,
+      kind: "approval",
+      questions: [],
+      toolInput: req.input,
+      createdAt: now(),
+    });
+    this.opts.bus.emit("claude:tool_approval_request", sessionId, rid, toolName, summary);
+    // approvals aren't in the jsonl → re-derive + broadcast the "approval" attention
+    void this.opts.store.refreshSession(sessionId);
+    return true;
+  }
+
+  /**
+   * Answer a pending tool approval: `allow` runs the tool with its original input;
+   * `deny` rejects it with a clean (non-error) message so the turn continues.
+   * Returns false if the request isn't a live approval in-process.
+   */
+  approveTool(sessionId: string, requestId: string, decision: "allow" | "deny"): boolean {
+    const w = this.procs.get(sessionId);
+    if (!w) return false;
+    const pend = w.pending.get(requestId);
+    if (!pend || pend.kind !== "approval") return false;
+    const baseInput = (pend.input && typeof pend.input === "object" ? pend.input : {}) as Record<
+      string,
+      unknown
+    >;
+    const response =
+      decision === "allow"
+        ? { behavior: "allow", updatedInput: { ...baseInput } }
+        : { behavior: "deny", message: "用户拒绝了该操作。" };
+    const ok = this.writeControl(sessionId, {
+      type: "control_response",
+      response: { subtype: "success", request_id: requestId, response },
+    });
+    if (!ok) return false;
+    w.pending.delete(requestId);
+    this.opts.pendingStore?.deletePendingPermission(requestId);
+    this.opts.bus.emit("claude:permission_cancel", sessionId, requestId); // dismiss the panel
+    void this.opts.store.refreshSession(sessionId); // clear the "approval" attention badge
+    this.touch(sessionId); // re-arm the idle reaper; the turn resumes
+    return true;
+  }
+
+  /**
+   * Drop a pending tool approval that can no longer be answered in-process (the
+   * process died and it was recovered as `live:false`). Deletes the durable row,
+   * dismisses the panel, and clears the "approval" badge. Returns true if an
+   * approval row was actually dropped (idempotent / kind-checked).
+   */
+  dropApproval(sessionId: string, requestId: string): boolean {
+    const rec = this.opts.pendingStore?.getPendingPermission(requestId);
+    if (!rec || rec.sessionId !== sessionId || rec.kind !== "approval") return false;
+    this.opts.pendingStore?.deletePendingPermission(requestId);
+    this.procs.get(sessionId)?.pending.delete(requestId);
+    this.opts.bus.emit("claude:permission_cancel", sessionId, requestId);
+    void this.opts.store.refreshSession(sessionId);
     return true;
   }
 
@@ -467,7 +533,7 @@ export class ClaudeDriver {
     const w = this.procs.get(sessionId);
     if (!w) return false;
     const pend = w.pending.get(requestId);
-    if (!pend) return false;
+    if (!pend || pend.kind !== "question") return false; // not an AskUserQuestion
     const baseInput = (pend.input && typeof pend.input === "object" ? pend.input : {}) as Record<
       string,
       unknown
@@ -501,7 +567,7 @@ export class ClaudeDriver {
     const w = this.procs.get(sessionId);
     if (!w) return false;
     const pend = w.pending.get(requestId);
-    if (!pend) return false;
+    if (!pend || pend.kind !== "question") return false; // not an AskUserQuestion
     const baseInput = (pend.input && typeof pend.input === "object" ? pend.input : {}) as Record<
       string,
       unknown
@@ -575,6 +641,23 @@ export class ClaudeDriver {
     return out;
   }
 
+  /** Recoverable pending tool approvals for a session (durable rows; live if in-process). */
+  listPendingApprovals(sessionId: string): ToolApprovalView[] {
+    const rows = this.opts.pendingStore?.listPendingPermissions(sessionId) ?? [];
+    const w = this.procs.get(sessionId);
+    const out: ToolApprovalView[] = [];
+    for (const rec of rows) {
+      if (rec.kind !== "approval") continue;
+      out.push({
+        requestId: rec.requestId,
+        toolName: rec.toolName,
+        summary: summarizeToolInput(rec.toolName, rec.toolInput),
+        live: !!w?.pending.has(rec.requestId),
+      });
+    }
+    return out;
+  }
+
   private respondPermissionDeny(sessionId: string, requestId: string, message: string): void {
     this.writeControl(sessionId, {
       type: "control_response",
@@ -639,6 +722,32 @@ export class ClaudeDriver {
 
 function now(): string {
   return new Date().toISOString();
+}
+
+/** Human-readable one-line summary of a tool's input for the approval panel. */
+export function summarizeToolInput(toolName: string, input: unknown): string {
+  const obj = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const clip = (s: unknown, n = 200): string => {
+    const str = typeof s === "string" ? s : JSON.stringify(s ?? "");
+    const oneLine = str.replace(/\s+/g, " ").trim();
+    return oneLine.length > n ? `${oneLine.slice(0, n)}…` : oneLine;
+  };
+  switch (toolName) {
+    case "Bash":
+      return clip(obj.command);
+    case "Write":
+    case "Edit":
+    case "MultiEdit":
+    case "Read":
+    case "NotebookEdit":
+      return clip(obj.file_path ?? obj.notebook_path ?? obj);
+    case "WebFetch":
+      return clip(obj.url);
+    case "WebSearch":
+      return clip(obj.query);
+    default:
+      return clip(obj);
+  }
 }
 
 /** Coerce an AskUserQuestion tool input into client-facing questions, or null. */

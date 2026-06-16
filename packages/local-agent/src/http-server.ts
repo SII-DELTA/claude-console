@@ -3,6 +3,7 @@ import cors from "@fastify/cors";
 import {
   CreateSessionInputSchema,
   ClaudeAnswerPermissionBodySchema,
+  ClaudeAnswerToolApprovalBodySchema,
   ClaudeContinueBodySchema,
   ClaudeCreateBodySchema,
   ClaudeSwitchProjectBodySchema,
@@ -347,10 +348,42 @@ export async function buildHttpApp(opts: BuildHttpOptions): Promise<FastifyInsta
     },
   );
 
+  // Answer a pending tool approval (non-AskUserQuestion): allow once / deny.
+  app.post<{ Params: { id: string } }>(
+    "/claude/sessions/:id/answer-tool-approval",
+    async (req, reply) => {
+      const parsed = ClaudeAnswerToolApprovalBodySchema.safeParse(req.body);
+      if (!parsed.success) {
+        reply.code(400);
+        return { error: "bad_request", code: ERROR_CODES.BAD_REQUEST, issues: parsed.error.issues };
+      }
+      // live (in-process) first; otherwise the process is gone (recovered row) →
+      // drop the durable row so the badge/panel clears instead of lingering.
+      let ok = opts.driver.approveTool(
+        req.params.id,
+        parsed.data.requestId,
+        parsed.data.decision,
+      );
+      if (!ok) ok = opts.driver.dropApproval(req.params.id, parsed.data.requestId);
+      if (!ok) {
+        reply.code(409);
+        return {
+          error: "approval_not_pending",
+          code: ERROR_CODES.SESSION_FAILED,
+          message: "该审批已失效（可能已处理或会话已结束）",
+        };
+      }
+      return { ok: true };
+    },
+  );
+
   app.get<{ Params: { id: string } }>(
     "/claude/sessions/:id/pending-permission",
     async (req) => {
-      return { pending: opts.driver.listPending(req.params.id) };
+      return {
+        pending: opts.driver.listPending(req.params.id),
+        approvals: opts.driver.listPendingApprovals(req.params.id),
+      };
     },
   );
 

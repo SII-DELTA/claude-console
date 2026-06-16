@@ -66,6 +66,7 @@ describe("ClaudeDriver", () => {
     const store = {
       isLive: vi.fn(async () => false),
       getSession: vi.fn(async () => ({ session: { cwd: "/ws" } })),
+      refreshSession: vi.fn(async () => {}),
     } as any;
     const driver = new ClaudeDriver({
       workspaceRoot: () => "/ws",
@@ -210,6 +211,7 @@ describe("ClaudeDriver interactive permissions (方案 B)", () => {
     const store = {
       isLive: vi.fn(async () => false),
       getSession: vi.fn(async () => ({ session: { cwd: "/ws" } })),
+      refreshSession: vi.fn(async () => {}),
     } as any;
     const pendingStore = makePendingStore();
     const driver = new ClaudeDriver({
@@ -286,15 +288,68 @@ describe("ClaudeDriver interactive permissions (方案 B)", () => {
     expect(driver.answerPermission(sessionId, "req1", { "Pick?": "B" })).toBe(false);
   });
 
-  it("denies non-AskUserQuestion ask-path tools without surfacing a picker", () => {
+  it("surfaces non-AskUserQuestion ask-path tools as an allow/deny approval", () => {
     const { driver, proc, bus } = setupB();
-    let surfaced = false;
-    bus.on("claude:permission_request", () => (surfaced = true));
-    driver.newSession("go");
+    let questionSurfaced = false;
+    bus.on("claude:permission_request", () => (questionSurfaced = true));
+    const approvals: any[] = [];
+    bus.on("claude:tool_approval_request", (sessionId, requestId, toolName, summary) =>
+      approvals.push({ sessionId, requestId, toolName, summary }),
+    );
+    const { sessionId } = driver.newSession("go");
     proc.stdout.emit("data", canUse("req2", "Bash", { command: "rm -rf /" }) + "\n");
-    expect(surfaced).toBe(false);
-    const resp = writes(proc).find((w) => w.type === "control_response");
-    expect(resp.response.response.behavior).toBe("deny");
+    // not a question, and not answered yet — held open awaiting the user's decision
+    expect(questionSurfaced).toBe(false);
+    expect(approvals).toEqual([
+      { sessionId, requestId: "req2", toolName: "Bash", summary: "rm -rf /" },
+    ]);
+    expect(writes(proc).find((w) => w.type === "control_response")).toBeUndefined();
+  });
+
+  it("approveTool allow → behavior:allow; deny → behavior:deny (clean message)", () => {
+    const { driver, proc } = setupB();
+    const { sessionId } = driver.newSession("go");
+
+    proc.stdout.emit("data", canUse("rA", "Bash", { command: "ls" }) + "\n");
+    expect(driver.approveTool(sessionId, "rA", "allow")).toBe(true);
+    const allow = writes(proc).find((w) => w.response?.request_id === "rA");
+    expect(allow.response.response.behavior).toBe("allow");
+    // a second decision is a no-op (no longer pending)
+    expect(driver.approveTool(sessionId, "rA", "allow")).toBe(false);
+
+    proc.stdout.emit("data", canUse("rB", "Bash", { command: "rm x" }) + "\n");
+    expect(driver.approveTool(sessionId, "rB", "deny")).toBe(true);
+    const deny = writes(proc).find((w) => w.response?.request_id === "rB");
+    expect(deny.response.response.behavior).toBe("deny");
+    expect(deny.response.response.message).toBeTruthy();
+  });
+
+  it("answerPermission/declinePermission reject an approval requestId (kind guard)", () => {
+    const { driver, proc } = setupB();
+    const { sessionId } = driver.newSession("go");
+    proc.stdout.emit("data", canUse("rK", "Bash", { command: "ls" }) + "\n");
+    // these are AskUserQuestion paths — must not touch an approval row
+    expect(driver.answerPermission(sessionId, "rK", { x: "y" })).toBe(false);
+    expect(driver.declinePermission(sessionId, "rK")).toBe(false);
+    // the proper path still resolves it
+    expect(driver.approveTool(sessionId, "rK", "deny")).toBe(true);
+  });
+
+  it("recovered approval (process gone) is cleared via dropApproval, not approveTool", () => {
+    const { driver, proc, pendingStore, bus } = setupB();
+    const { sessionId } = driver.newSession("go");
+    proc.stdout.emit("data", canUse("rD", "Bash", { command: "ls" }) + "\n");
+    expect(pendingStore.rows.has("rD")).toBe(true);
+    // process dies mid-approval → durable row is KEPT (recoverable), proc gone
+    proc.emit("close", 1);
+    expect(driver.approveTool(sessionId, "rD", "allow")).toBe(false); // no live proc
+    expect(pendingStore.rows.has("rD")).toBe(true); // still lingering
+    let cancelled: string | null = null;
+    bus.on("claude:permission_cancel", (_s, rid) => (cancelled = rid));
+    expect(driver.dropApproval(sessionId, "rD")).toBe(true); // drop the stale row
+    expect(pendingStore.rows.has("rD")).toBe(false);
+    expect(cancelled).toBe("rD");
+    expect(driver.dropApproval(sessionId, "rD")).toBe(false); // idempotent
   });
 
   it("control_cancel_request drops the pending ask and notifies the client", () => {

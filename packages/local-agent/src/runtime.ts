@@ -85,6 +85,9 @@ export async function startAgent(config: AgentRuntimeConfig): Promise<AgentRunti
   // jsonl hasn't been flushed recently (long silent tool/bash). Keeps such sessions
   // showing as live instead of falsely flipping to "stopped" via mtime alone.
   claude.setDrivingPredicate((id) => driver.isDriving(id));
+  // a pending tool approval lives in the control protocol / durable store, not the
+  // jsonl → surface it as "approval" attention so the dashboard flags it.
+  claude.setPendingApprovalPredicate((id) => store.hasPendingApproval(id));
   // hook-derived liveness covers terminal/VSCode/our-own sessions uniformly (event
   // driven, no mtime polling). Union'd with the driver signal in buildSession.
   const liveness = new SessionLiveness(bus);
