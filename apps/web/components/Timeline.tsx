@@ -56,7 +56,7 @@ function SendReceipt({ state }: { state: SendState }) {
   const map: Record<SendState, { text: string; cls: string }> = {
     sending: { text: "发送中…", cls: "text-ink-faint" },
     delivered: { text: "已送达 ✓", cls: "text-ink-faint" },
-    read: { text: "已读·处理中 ✓✓", cls: "text-accent" },
+    read: { text: "已读·处理中 ✓", cls: "text-accent" },
     failed: { text: "发送失败", cls: "text-danger" },
   };
   const { text, cls } = map[state];
