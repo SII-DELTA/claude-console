@@ -54,6 +54,7 @@ export function Composer({
 
   const api = useAppStore((s) => s.api);
   const setError = useAppStore((s) => s.setError);
+  const enterBehavior = useAppStore((s) => s.enterBehavior);
   const [recording, setRecording] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
   const [voiceHint, setVoiceHint] = useState(false);
@@ -170,11 +171,18 @@ export function Composer({
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
-    // Touch devices: let Enter insert a newline; sending is via the send button.
-    const coarse =
-      typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches;
-    if (coarse) return;
-    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+    if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
+    // Decide whether Enter sends or inserts a newline.
+    let send: boolean;
+    if (enterBehavior === "send") send = true;
+    else if (enterBehavior === "newline") send = false;
+    else {
+      // auto: touch devices insert a newline (send via the button); else Enter sends.
+      const coarse =
+        typeof window !== "undefined" && !!window.matchMedia?.("(pointer: coarse)").matches;
+      send = !coarse;
+    }
+    if (send) {
       e.preventDefault();
       submit();
     }

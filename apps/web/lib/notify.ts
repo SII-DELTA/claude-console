@@ -8,6 +8,27 @@ import { isPushActive } from "./push";
 let originalTitle = "";
 let flashTimer: ReturnType<typeof setInterval> | null = null;
 
+const IN_APP_KEY = "mac.inAppNotify";
+
+/** Whether the foreground in-app notifier (OS notification + title flash) is on. Default on. */
+export function getInAppNotify(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    return window.localStorage.getItem(IN_APP_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+export function setInAppNotify(on: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(IN_APP_KEY, on ? "1" : "0");
+  } catch {
+    /* storage unavailable */
+  }
+}
+
 function canSystemNotify(): boolean {
   return (
     typeof window !== "undefined" &&
@@ -33,6 +54,7 @@ export function ensureNotificationPermission(): void {
  */
 export function notify(title: string, body?: string): void {
   if (typeof document === "undefined") return;
+  if (!getInAppNotify()) return; // user disabled foreground in-app notifications
   if (!document.hidden) return; // viewing the app → no redundant notification
   // When Web Push is active, the service worker shows the notification — don't double up.
   if (canSystemNotify() && !isPushActive()) {

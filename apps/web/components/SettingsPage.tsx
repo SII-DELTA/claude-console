@@ -2,8 +2,26 @@
 
 import { useEffect, useState } from "react";
 import type { ClaudePermissionMode } from "@mac/shared";
-import { useAppStore } from "../lib/store";
+import { useAppStore, type EnterBehavior } from "../lib/store";
+import { getInAppNotify, setInAppNotify } from "../lib/notify";
 import { disablePush, enablePush, getPushStatus, isIosNonStandalone, isPushSupported, type PushStatus } from "../lib/push";
+
+/** Reusable iOS-style switch (track + knob), correctly centered. */
+function Toggle({ on, onClick, disabled, label }: { on: boolean; onClick: () => void; disabled?: boolean; label: string }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      aria-pressed={on}
+      aria-label={label}
+      className={`flex h-6 w-11 shrink-0 items-center rounded-full p-0.5 transition-colors disabled:opacity-40 ${
+        on ? "bg-accent" : "bg-line"
+      }`}
+    >
+      <span className={`h-5 w-5 rounded-full bg-white shadow transition-transform ${on ? "translate-x-5" : "translate-x-0"}`} />
+    </button>
+  );
+}
 
 const PERM_OPTIONS: { value: ClaudePermissionMode; label: string; hint: string }[] = [
   { value: "plan", label: "计划", hint: "只规划不执行" },
@@ -38,6 +56,8 @@ export function SettingsPage({
       </section>
 
       <PushSection />
+
+      <GeneralSection />
 
       <section className="mb-5">
         <h2 className="mb-2 text-[12px] font-semibold text-ink-dim">默认权限模式</h2>
@@ -111,21 +131,12 @@ function PushSection() {
                     : "关闭后台离线也能收到提醒"}
             </div>
           </div>
-          <button
+          <Toggle
+            on={on}
             onClick={() => void toggle()}
             disabled={busy || status === "unsupported" || status === "denied"}
-            className={`flex h-6 w-11 shrink-0 items-center rounded-full p-0.5 transition-colors disabled:opacity-40 ${
-              on ? "bg-accent" : "bg-line"
-            }`}
-            aria-pressed={on}
-            aria-label="推送通知开关"
-          >
-            <span
-              className={`h-5 w-5 rounded-full bg-white shadow transition-transform ${
-                on ? "translate-x-5" : "translate-x-0"
-              }`}
-            />
-          </button>
+            label="推送通知开关"
+          />
         </div>
         {isIosNonStandalone() && (
           <p className="mt-2 rounded-lg bg-bg-raised px-2.5 py-1.5 text-[11px] text-ink-faint">
@@ -133,6 +144,81 @@ function PushSection() {
           </p>
         )}
         {msg && <p className="mt-2 text-[11px] text-danger">{msg}</p>}
+      </div>
+    </section>
+  );
+}
+
+const MSG_PRESETS = [10, 20, 40, 60];
+const ENTER_OPTS: { v: EnterBehavior; label: string }[] = [
+  { v: "auto", label: "自动" },
+  { v: "send", label: "发送" },
+  { v: "newline", label: "换行" },
+];
+
+function GeneralSection() {
+  const initialMessages = useAppStore((s) => s.initialMessages);
+  const setInitialMessages = useAppStore((s) => s.setInitialMessages);
+  const enterBehavior = useAppStore((s) => s.enterBehavior);
+  const setEnterBehavior = useAppStore((s) => s.setEnterBehavior);
+  const [inApp, setInApp] = useState(true);
+  useEffect(() => setInApp(getInAppNotify()), []);
+
+  return (
+    <section className="mb-5">
+      <h2 className="mb-2 text-[12px] font-semibold text-ink-dim">通用</h2>
+      <div className="space-y-3.5 rounded-xl border border-line bg-bg-alt p-3">
+        <div>
+          <div className="text-[13px] text-ink">首屏消息条数</div>
+          <div className="mt-1.5 flex gap-1.5">
+            {MSG_PRESETS.map((n) => (
+              <button
+                key={n}
+                onClick={() => setInitialMessages(n)}
+                className={`flex-1 rounded-lg border py-1.5 text-[13px] transition-colors ${
+                  n === initialMessages ? "border-accent bg-accent/15 text-accent" : "border-line text-ink-dim hover:bg-bg-raised"
+                }`}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
+          <p className="mt-1 text-[11px] text-ink-faint">打开会话首屏渲染条数；「加载更早」每次仍 +40。</p>
+        </div>
+
+        <div>
+          <div className="text-[13px] text-ink">回车键</div>
+          <div className="mt-1.5 flex gap-1.5">
+            {ENTER_OPTS.map((o) => (
+              <button
+                key={o.v}
+                onClick={() => setEnterBehavior(o.v)}
+                className={`flex-1 rounded-lg border py-1.5 text-[13px] transition-colors ${
+                  o.v === enterBehavior ? "border-accent bg-accent/15 text-accent" : "border-line text-ink-dim hover:bg-bg-raised"
+                }`}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+          <p className="mt-1 text-[11px] text-ink-faint">自动：触屏换行、桌面回车发送。Shift+Enter 始终换行。</p>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px] text-ink">前台应用内通知</div>
+            <div className="mt-0.5 text-[11px] text-ink-faint">App 在前台但页面隐藏时的系统通知与标题提醒。</div>
+          </div>
+          <Toggle
+            on={inApp}
+            onClick={() => {
+              const v = !inApp;
+              setInAppNotify(v);
+              setInApp(v);
+            }}
+            label="前台通知开关"
+          />
+        </div>
       </div>
     </section>
   );

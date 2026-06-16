@@ -39,8 +39,33 @@ let prewarmTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** messages fetched on each "load earlier" step */
 const HISTORY_PAGE = 40;
-/** messages rendered on first opening a session (configurable via env, default 10) */
-const INITIAL_MESSAGES = Number(process.env.NEXT_PUBLIC_INITIAL_MESSAGES) || 10;
+/** messages rendered on first opening a session (env default; overridable in Settings) */
+const INITIAL_MESSAGES_DEFAULT = Number(process.env.NEXT_PUBLIC_INITIAL_MESSAGES) || 10;
+const INITIAL_KEY = "mac.initialMessages";
+const ENTER_KEY = "mac.enterBehavior";
+
+/** How the Enter key behaves in the composer. auto = by device (touch→newline). */
+export type EnterBehavior = "auto" | "send" | "newline";
+
+function loadInitialMessages(): number {
+  if (typeof window === "undefined") return INITIAL_MESSAGES_DEFAULT;
+  try {
+    const v = Number(window.localStorage.getItem(INITIAL_KEY));
+    return Number.isFinite(v) && v > 0 ? v : INITIAL_MESSAGES_DEFAULT;
+  } catch {
+    return INITIAL_MESSAGES_DEFAULT;
+  }
+}
+
+function loadEnterBehavior(): EnterBehavior {
+  if (typeof window === "undefined") return "auto";
+  try {
+    const v = window.localStorage.getItem(ENTER_KEY);
+    return v === "send" || v === "newline" ? v : "auto";
+  } catch {
+    return "auto";
+  }
+}
 /** how many recently-viewed sessions to keep rendered in memory */
 const SESSION_CACHE_MAX = 5;
 /** in-memory cache of recently viewed sessions → instant switch-back (no refetch/re-render churn) */
@@ -116,6 +141,10 @@ interface AppState {
   /** usage of the last completed turn for the selected session */
   lastUsage: { sessionId: string; usage: ClaudeUsage } | null;
   permissionMode: ClaudePermissionMode;
+  /** how many messages to render when first opening a session (Settings) */
+  initialMessages: number;
+  /** Enter-key behavior in the composer (Settings) */
+  enterBehavior: EnterBehavior;
   rateLimit: { resetsAt?: number; limitType?: string; status?: string } | null;
   /** An interactive AskUserQuestion awaiting the user's choice (方案 B). */
   pendingPermission: {
@@ -142,6 +171,8 @@ interface AppState {
   setConnection: (c: Connection | null) => void;
   setMobileTab: (t: MobileTab) => void;
   setPermissionMode: (m: ClaudePermissionMode) => void;
+  setInitialMessages: (n: number) => void;
+  setEnterBehavior: (b: EnterBehavior) => void;
   connectWs: () => void;
   /** Re-check the socket when the tab returns to the foreground (mobile resume). */
   handleVisible: () => void;
@@ -223,6 +254,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   driveStatus: "idle",
   lastUsage: null,
   permissionMode: loadPermissionMode(),
+  initialMessages: loadInitialMessages(),
+  enterBehavior: loadEnterBehavior(),
   rateLimit: null,
   pendingPermission: null,
   toolApproval: null,
@@ -236,6 +269,16 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setMobileTab(t) {
     set({ mobileTab: t });
+  },
+
+  setInitialMessages(n) {
+    if (typeof window !== "undefined") window.localStorage.setItem(INITIAL_KEY, String(n));
+    set({ initialMessages: n });
+  },
+
+  setEnterBehavior(b) {
+    if (typeof window !== "undefined") window.localStorage.setItem(ENTER_KEY, b);
+    set({ enterBehavior: b });
   },
 
   setConnection(c) {
@@ -434,7 +477,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     set({ messages: [], historyOffset: 0, loadingEarlier: false, loadingDetail: true });
     try {
-      const res = await api.claudeSession(id, { limit: INITIAL_MESSAGES });
+      const res = await api.claudeSession(id, { limit: get().initialMessages });
       // guard against a race where the user switched away mid-fetch
       if (get().selectedId === id) {
         cacheSet(id, res.messages, res.offset);
