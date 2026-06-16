@@ -153,7 +153,36 @@ export class HistoryStore {
         sessionId TEXT NOT NULL,
         dismissedAt TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS push_subscriptions (
+        endpoint TEXT PRIMARY KEY,
+        p256dh TEXT NOT NULL,
+        auth TEXT NOT NULL,
+        createdAt TEXT NOT NULL
+      );
     `);
+  }
+
+  /* ---------------- web push subscriptions ---------------- */
+
+  savePushSubscription(sub: { endpoint: string; p256dh: string; auth: string }): void {
+    this.db
+      .prepare(
+        `INSERT INTO push_subscriptions (endpoint,p256dh,auth,createdAt)
+         VALUES (@endpoint,@p256dh,@auth,@createdAt)
+         ON CONFLICT(endpoint) DO UPDATE SET p256dh=excluded.p256dh, auth=excluded.auth`,
+      )
+      .run({ ...sub, createdAt: new Date().toISOString() });
+  }
+
+  deletePushSubscription(endpoint: string): void {
+    this.db.prepare(`DELETE FROM push_subscriptions WHERE endpoint=?`).run(endpoint);
+  }
+
+  listPushSubscriptions(): Array<{ endpoint: string; p256dh: string; auth: string }> {
+    return this.db
+      .prepare(`SELECT endpoint,p256dh,auth FROM push_subscriptions`)
+      .all() as Array<{ endpoint: string; p256dh: string; auth: string }>;
   }
 
   /* ---------------- sessions ---------------- */

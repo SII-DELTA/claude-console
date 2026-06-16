@@ -520,6 +520,16 @@ export const ServerPongSchema = z.object({
   ts: z.number().int().optional(),
 });
 
+/** A browser Web Push subscription (the JSON from PushSubscription.toJSON()). */
+export const PushSubscriptionSchema = z.object({
+  endpoint: z.string().url(),
+  keys: z.object({
+    p256dh: z.string().min(1),
+    auth: z.string().min(1),
+  }),
+});
+export type PushSubscriptionJSON = z.infer<typeof PushSubscriptionSchema>;
+
 export const ServerMessageSchema = z.discriminatedUnion("type", [
   ServerHelloSchema,
   ServerSessionCreatedSchema,

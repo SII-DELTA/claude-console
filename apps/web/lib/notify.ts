@@ -3,6 +3,8 @@
  * (https/localhost); over plain-http remote we fall back to flashing the tab
  * title so a backgrounded tab still signals "Claude needs you / is done".
  */
+import { isPushActive } from "./push";
+
 let originalTitle = "";
 let flashTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -24,17 +26,23 @@ export function ensureNotificationPermission(): void {
   }
 }
 
-/** Notify the user a turn finished / needs input. Self-gates on tab visibility. */
+/**
+ * Foreground fallback notifier (desktop). Only fires when the page is NOT visible —
+ * in the foreground the in-app UI already shows everything, so notifying there is just
+ * noise. Real backgrounded/closed delivery is handled by Web Push (the service worker).
+ */
 export function notify(title: string, body?: string): void {
   if (typeof document === "undefined") return;
-  if (canSystemNotify()) {
+  if (!document.hidden) return; // viewing the app → no redundant notification
+  // When Web Push is active, the service worker shows the notification — don't double up.
+  if (canSystemNotify() && !isPushActive()) {
     try {
-      new Notification(title, { body, icon: "/claude-logo.svg", tag: "claude-console" });
+      new Notification(title, { body, icon: "/icon-192.png?v=3", tag: "claude-console" });
     } catch {
       /* ignore */
     }
   }
-  if (document.hidden) startTitleFlash(title);
+  startTitleFlash(title);
 }
 
 function startTitleFlash(msg: string): void {

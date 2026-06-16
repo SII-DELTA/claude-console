@@ -12,6 +12,7 @@ import { ClaudeStore } from "./claude-store.js";
 import { ClaudeDriver } from "./claude-driver.js";
 import { SessionLiveness } from "./session-liveness.js";
 import { installLivenessHooks } from "./hooks-installer.js";
+import { PushManager } from "./push-manager.js";
 import type { AgentSession } from "@mac/shared";
 import type { PtyFactory } from "./pty.js";
 
@@ -132,6 +133,20 @@ export async function startAgent(config: AgentRuntimeConfig): Promise<AgentRunti
   // beyond loopback, e.g. over Tailscale).
   const noAuth = !password;
 
+  // Web Push: agent pushes "needs answer / done / error" to subscribed browsers so
+  // notifications arrive even when the PWA is backgrounded/closed. Title cache is fed
+  // by session updates so we don't re-parse a transcript on every turn event.
+  const push = new PushManager(store, { storagePath: config.storagePath });
+  const titleOf = new Map<string, string>();
+  bus.on("claude:session_updated", (s) => titleOf.set(s.id, s.title));
+  const pushNotify = (sessionId: string, kind: "question" | "error" | "done", body: string) =>
+    void push.notify({ sessionId, title: titleOf.get(sessionId) ?? "Claude 会话", body, kind });
+  bus.on("claude:permission_request", (sessionId) => pushNotify(sessionId, "question", "需要你回答"));
+  bus.on("claude:drive_done", (sessionId) => pushNotify(sessionId, "done", "已完成一轮"));
+  bus.on("claude:drive_error", (sessionId, message) => {
+    if (sessionId) pushNotify(sessionId, "error", `执行出错：${(message ?? "").slice(0, 80)}`);
+  });
+
   const app = await buildHttpApp({
     auth,
     sessions,
@@ -139,6 +154,7 @@ export async function startAgent(config: AgentRuntimeConfig): Promise<AgentRunti
     workspaceReader,
     claude,
     driver,
+    push,
     serverVersion: config.serverVersion ?? "0.1.0",
     allowedOrigins,
     whisperApiKey: config.whisperApiKey,

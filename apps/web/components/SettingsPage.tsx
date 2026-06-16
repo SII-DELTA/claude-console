@@ -1,6 +1,9 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import type { ClaudePermissionMode } from "@mac/shared";
+import { useAppStore } from "../lib/store";
+import { disablePush, enablePush, getPushStatus, isIosNonStandalone, isPushSupported, type PushStatus } from "../lib/push";
 
 const PERM_OPTIONS: { value: ClaudePermissionMode; label: string; hint: string }[] = [
   { value: "plan", label: "计划", hint: "只规划不执行" },
@@ -42,6 +45,8 @@ export function SettingsPage({
         </button>
       </section>
 
+      <PushSection />
+
       <section className="mb-5">
         <h2 className="mb-2 text-[12px] font-semibold text-ink-dim">默认权限模式</h2>
         <div className="overflow-hidden rounded-xl border border-line bg-bg-alt">
@@ -66,6 +71,78 @@ export function SettingsPage({
         <p className="mt-1.5 px-1 text-[11px] text-ink-faint">会话内仍可临时切换；此处为默认值。</p>
       </section>
     </div>
+  );
+}
+
+function PushSection() {
+  const api = useAppStore((s) => s.api);
+  const [status, setStatus] = useState<PushStatus>("unsupported");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    void getPushStatus().then(setStatus);
+  }, []);
+
+  const on = status === "subscribed";
+  async function toggle() {
+    if (!api || busy) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      if (on) {
+        await disablePush(api);
+      } else {
+        const r = await enablePush(api);
+        if (!r.ok) setMsg(r.reason ?? "开启失败");
+      }
+      setStatus(await getPushStatus());
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="mb-5">
+      <h2 className="mb-2 text-[12px] font-semibold text-ink-dim">推送通知</h2>
+      <div className="rounded-xl border border-line bg-bg-alt p-3">
+        <div className="flex items-center gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px] text-ink">需要回答 / 出错 / 完成时推送到本机</div>
+            <div className="mt-0.5 text-[11px] text-ink-faint">
+              {status === "unsupported"
+                ? "此环境不支持（需 HTTPS）"
+                : status === "denied"
+                  ? "通知权限已被拒绝，请在系统设置中允许"
+                  : on
+                    ? "已开启"
+                    : "关闭后台离线也能收到提醒"}
+            </div>
+          </div>
+          <button
+            onClick={() => void toggle()}
+            disabled={busy || status === "unsupported" || status === "denied"}
+            className={`relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-40 ${
+              on ? "bg-accent" : "bg-line"
+            }`}
+            aria-pressed={on}
+            aria-label="推送通知开关"
+          >
+            <span
+              className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
+                on ? "translate-x-5" : "translate-x-0.5"
+              }`}
+            />
+          </button>
+        </div>
+        {isIosNonStandalone() && (
+          <p className="mt-2 rounded-lg bg-bg-raised px-2.5 py-1.5 text-[11px] text-ink-faint">
+            iPhone：需用 Safari「添加到主屏幕」打开本应用，才能开启推送（浏览器标签页不支持）。
+          </p>
+        )}
+        {msg && <p className="mt-2 text-[11px] text-danger">{msg}</p>}
+      </div>
+    </section>
   );
 }
 

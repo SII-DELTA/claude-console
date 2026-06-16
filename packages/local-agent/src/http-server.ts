@@ -13,9 +13,11 @@ import {
   PROTOCOL_VERSION,
   PairRequestSchema,
   PasswordLoginSchema,
+  PushSubscriptionSchema,
   SessionInputBodySchema,
   SwitchWorkspaceBodySchema,
 } from "@mac/shared";
+import type { PushManager } from "./push-manager.js";
 import type { AuthManager } from "./auth-manager.js";
 import type { SessionManager } from "./session-manager.js";
 import type { HistoryStore } from "./history-store.js";
@@ -38,9 +40,18 @@ export interface BuildHttpOptions {
   /** Skip bearer-token auth (local convenience). Default false = auth required. */
   noAuth?: boolean;
   switchWorkspace?: (input: { workspaceId?: string; rootPath?: string }) => boolean;
+  push?: PushManager;
 }
 
-const FREE_PATHS = new Set(["/health", "/auth/pair", "/auth/pair/issue", "/auth/login", "/usage"]);
+// VAPID public key is needed before login to create a subscription → free path.
+const FREE_PATHS = new Set([
+  "/health",
+  "/auth/pair",
+  "/auth/pair/issue",
+  "/auth/login",
+  "/usage",
+  "/push/vapid-public-key",
+]);
 
 export async function buildHttpApp(opts: BuildHttpOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger: false, bodyLimit: 25 * 1024 * 1024 });
@@ -441,6 +452,40 @@ export async function buildHttpApp(opts: BuildHttpOptions): Promise<FastifyInsta
   });
 
   app.get("/protocol", async () => ({ version: PROTOCOL_VERSION }));
+
+  // ─────────────── Web Push ───────────────
+  app.get("/push/vapid-public-key", async () => {
+    if (!opts.push) return { enabled: false, publicKey: null };
+    return { enabled: true, publicKey: opts.push.publicKey };
+  });
+
+  app.post("/push/subscribe", async (req, reply) => {
+    if (!opts.push) {
+      reply.code(503);
+      return { error: "push_disabled", code: ERROR_CODES.INTERNAL };
+    }
+    const parsed = PushSubscriptionSchema.safeParse(req.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: "bad_request", code: ERROR_CODES.BAD_REQUEST, issues: parsed.error.issues };
+    }
+    opts.push.subscribe(parsed.data);
+    return { ok: true };
+  });
+
+  app.post("/push/unsubscribe", async (req, reply) => {
+    if (!opts.push) {
+      reply.code(503);
+      return { error: "push_disabled", code: ERROR_CODES.INTERNAL };
+    }
+    const endpoint = (req.body as { endpoint?: string } | undefined)?.endpoint;
+    if (!endpoint) {
+      reply.code(400);
+      return { error: "bad_request", code: ERROR_CODES.BAD_REQUEST };
+    }
+    opts.push.unsubscribe(endpoint);
+    return { ok: true };
+  });
 
   return app;
 }

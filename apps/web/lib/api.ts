@@ -7,6 +7,7 @@ import type {
   ClaudeProject,
   ClaudeSession,
   ListWorkspacesResponse,
+  PushSubscriptionJSON,
   Workspace,
 } from "@mac/shared";
 
@@ -204,6 +205,17 @@ export class ApiClient {
   // shell/pty sessions (kept for completeness; not used by the Claude console UI)
   listSessions(): Promise<{ sessions: AgentSession[] }> {
     return this.request("GET", "/sessions");
+  }
+
+  // ─────────────── Web Push ───────────────
+  pushVapidPublicKey(): Promise<{ enabled: boolean; publicKey: string | null }> {
+    return this.request("GET", "/push/vapid-public-key");
+  }
+  pushSubscribe(sub: PushSubscriptionJSON): Promise<{ ok: true }> {
+    return this.request("POST", "/push/subscribe", sub);
+  }
+  pushUnsubscribe(endpoint: string): Promise<{ ok: true }> {
+    return this.request("POST", "/push/unsubscribe", { endpoint });
   }
 
   // Claude API usage quota

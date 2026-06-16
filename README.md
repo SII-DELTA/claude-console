@@ -15,6 +15,7 @@
 - **续写接管** — 续写历史会话（resume），或从浏览器新开会话并全程驱动。
 - **结构化消息** — text / thinking / tool_use / tool_result 分块展示，非纯文本流。
 - **语音输入** — 麦克风转文字直接发送（需 HTTPS，见下）。
+- **推送通知** — 「需要回答 / 出错 / 完成」由 agent 经 Web Push 推到本机，后台/关闭也能收到（Settings 里开启）。安卓/桌面 Chrome·Firefox 直接可用；**iPhone 需用 Safari「添加到主屏幕」装成 PWA**（iOS 限制：浏览器标签页不支持推送）。需 HTTPS。
 - **PWA** — Claude Code 风格深色 UI，电脑/手机双适配，可装到主屏幕。
 - **开箱即用的鉴权** — 不设密码即开放直连免登录；设了 `MAC_AGENT_PASSWORD` 才要求登录。
 
