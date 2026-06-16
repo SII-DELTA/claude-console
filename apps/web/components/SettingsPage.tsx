@@ -15,34 +15,26 @@ const PERM_OPTIONS: { value: ClaudePermissionMode; label: string; hint: string }
 
 export function SettingsPage({
   serverUrl,
-  workspaceName,
   wsConnected,
   permissionMode,
   onPermissionChange,
-  onDisconnect,
 }: {
   serverUrl?: string;
-  workspaceName?: string;
   wsConnected: boolean;
   permissionMode: ClaudePermissionMode;
   onPermissionChange: (m: ClaudePermissionMode) => void;
-  onDisconnect: () => void;
 }) {
   return (
     <div className="h-full overflow-y-auto overscroll-contain px-4 py-4 scroll-thin">
       <section className="mb-5">
         <h2 className="mb-2 text-[12px] font-semibold text-ink-dim">连接</h2>
-        <div className="space-y-2 rounded-xl border border-line bg-bg-alt p-3 text-[13px]">
-          <Row label="服务器" value={serverUrl ?? "—"} mono />
-          <Row label="项目" value={workspaceName ?? "—"} />
+        <div className="space-y-2.5 rounded-xl border border-line bg-bg-alt p-3 text-[13px]">
+          <div>
+            <div className="text-[12px] text-ink-faint">服务器</div>
+            <div className="mt-0.5 break-all font-mono text-[12px] text-ink">{serverUrl ?? "—"}</div>
+          </div>
           <Row label="状态" value={wsConnected ? "已连接" : "未连接"} tone={wsConnected ? "text-success" : "text-ink-faint"} />
         </div>
-        <button
-          onClick={onDisconnect}
-          className="mt-2 w-full rounded-xl border border-danger/40 bg-danger/10 py-2 text-[13px] text-danger transition-colors hover:bg-danger/20"
-        >
-          断开连接
-        </button>
       </section>
 
       <PushSection />
@@ -122,15 +114,15 @@ function PushSection() {
           <button
             onClick={() => void toggle()}
             disabled={busy || status === "unsupported" || status === "denied"}
-            className={`relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-40 ${
+            className={`flex h-6 w-11 shrink-0 items-center rounded-full p-0.5 transition-colors disabled:opacity-40 ${
               on ? "bg-accent" : "bg-line"
             }`}
             aria-pressed={on}
             aria-label="推送通知开关"
           >
             <span
-              className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
-                on ? "translate-x-5" : "translate-x-0.5"
+              className={`h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                on ? "translate-x-5" : "translate-x-0"
               }`}
             />
           </button>

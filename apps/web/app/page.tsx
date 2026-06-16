@@ -334,11 +334,9 @@ function Console() {
             {mobileTab === "settings" && (
               <SettingsPage
                 serverUrl={connection?.url}
-                workspaceName={connection?.workspaceName}
                 wsConnected={wsConnected}
                 permissionMode={permissionMode}
                 onPermissionChange={setPermissionMode}
-                onDisconnect={() => setConnection(null)}
               />
             )}
           </div>
