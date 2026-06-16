@@ -1,5 +1,3 @@
-import { spawn } from "node:child_process";
-import { tmpdir } from "node:os";
 import type { Bus } from "./bus.js";
 import type { ClaudeStore } from "./claude-store.js";
 import type { LLMClient } from "./llm-client.js";
@@ -9,19 +7,18 @@ import type { ClaudeMessage } from "@mac/shared";
 /**
  * Out-of-band "current task" observer (spec layer C).
  *
- * On each completed turn it asks a cheap Haiku — via a one-shot `claude -p` print
- * call that reuses the user's existing Claude Code auth — to label what the session
- * is *currently* working on, and exposes that label to {@link ClaudeStore} so the
- * dashboard card title tracks the live task instead of the opening prompt.
+ * On each completed turn it asks the configured third-party LLM (LLM_API_*, e.g.
+ * DeepSeek-V4-Flash) to label what the session is *currently* working on, and
+ * exposes that label to {@link ClaudeStore} so the dashboard card title tracks the
+ * live task instead of the opening prompt.
  *
- * It is a pure READER: it never writes to the session's jsonl, never enters the
- * driven session's context, and runs in a neutral cwd so the project's CLAUDE.md
- * doesn't bias (or task) the observer. Failures degrade silently to layer A
- * (latest user instruction).
+ * It is a pure READER: it never writes to the session's jsonl and never enters the
+ * driven session's context. Summarization is API-only — if no LLM is configured the
+ * observer is not constructed at all (the Haiku `claude -p` fallback was removed).
+ * On any failure it degrades silently to layer A (latest user instruction).
  */
 
-// REPLACES claude's default system prompt (via --system-prompt) so the observer
-// doesn't inherit the agent persona that would make it *execute* the transcript.
+// System prompt for the observer so it summarizes (not executes) the transcript.
 const INSTRUCTION =
   "你是会话观察员。下面会给你一段 Claude Code 会话记录。" +
   "请只用一句最多 20 个汉字的中文动宾短语，概括这段会话当前正在做的具体任务" +
@@ -33,7 +30,6 @@ const INSTRUCTION =
 const TAIL_MESSAGES = 16;
 const TRANSCRIPT_BUDGET = 4000;
 const SUMMARY_MAX = 24;
-const SPAWN_TIMEOUT_MS = 25_000;
 /** delay after a session first starts running before the initial summary (let the
  *  new user turn land in the jsonl first) — gives a fast first title, then we fall
  *  back to the economical per-turn-end cadence. */
@@ -42,15 +38,11 @@ const KICKSTART_DELAY_MS = 2_000;
 export interface CurrentTaskOptions {
   store: ClaudeStore;
   bus: Bus;
-  /** Optional third-party OpenAI-compatible LLM — tried FIRST; falls back to Haiku. */
+  /** Third-party OpenAI-compatible LLM used for summaries (API-only; required). */
   llm?: LLMClient | null;
-  /** path to the claude binary (defaults to CLAUDE_BIN / "claude"). */
-  claudeBin?: string;
-  /** model alias for the observer (defaults to "haiku"). */
-  model?: string;
   /** delay before the one-time kickstart summary (default 2000ms; tests pass 0). */
   kickstartDelayMs?: number;
-  /** test seam: replace the whole summarizer (skips both LLM and spawn). */
+  /** test seam: replace the summarizer (skips the LLM call). */
   summarizeFn?: (transcript: string, cwd: string) => Promise<string | null>;
 }
 
@@ -137,78 +129,25 @@ export class CurrentTaskSummarizer {
     }
   }
 
-  /** Pick a summary source: test seam → third-party LLM (if ready) → Haiku CLI. */
+  /** Summarize via the configured third-party LLM (API only; no Haiku fallback). */
   private async runSummary(transcript: string, cwd: string): Promise<string | null> {
     if (this.opts.summarizeFn) return this.opts.summarizeFn(transcript, cwd);
     const llm = this.opts.llm;
-    if (llm?.ready()) {
-      try {
-        return await llm.chat(
-          [
-            { role: "system", content: INSTRUCTION },
-            { role: "user", content: transcript },
-          ],
-          { temperature: 0.2, maxTokens: 64, thinking: false },
-        );
-      } catch (e) {
-        // API down / bad key / timeout → fall back to Haiku, never leave it blank
-        console.warn(`[current-task] LLM API 失败，回退 Haiku：${e instanceof Error ? e.message : e}`);
-      }
-    }
-    return this.spawnSummary(transcript, cwd);
-  }
-
-  /** One-shot `claude -p` print call (reads transcript from stdin). */
-  private spawnSummary(transcript: string, _cwd: string): Promise<string | null> {
-    const bin = this.opts.claudeBin ?? process.env.CLAUDE_BIN ?? "claude";
-    const model = this.opts.model ?? process.env.CURRENT_TASK_MODEL ?? "haiku";
-    return new Promise((resolve) => {
-      const proc = spawn(
-        bin,
+    if (!llm?.ready()) return null;
+    try {
+      return await llm.chat(
         [
-          "-p",
-          "--model",
-          model,
-          "--output-format",
-          "json",
-          // single shot — never loop into tools / follow-ups
-          "--max-turns",
-          "1",
-          // REPLACE (not append) the default system prompt + drop dynamic sections,
-          // so the observer is tiny and cheap and won't act as a coding agent.
-          "--exclude-dynamic-system-prompt-sections",
-          "--system-prompt",
-          INSTRUCTION,
+          { role: "system", content: INSTRUCTION },
+          { role: "user", content: transcript },
         ],
-        // neutral cwd: don't load the project's CLAUDE.md into the observer
-        { cwd: tmpdir(), env: process.env },
+        { temperature: 0.2, maxTokens: 64, thinking: false },
       );
-      let out = "";
-      let settled = false;
-      const done = (v: string | null) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        try {
-          proc.kill("SIGTERM");
-        } catch {
-          /* noop */
-        }
-        resolve(v);
-      };
-      const timer = setTimeout(() => done(null), SPAWN_TIMEOUT_MS);
-      proc.stdout.on("data", (c: Buffer) => {
-        out += c.toString();
-      });
-      proc.on("error", () => done(null));
-      proc.on("close", () => done(extractResult(out)));
-      try {
-        proc.stdin.write(transcript);
-        proc.stdin.end();
-      } catch {
-        done(null);
-      }
-    });
+    } catch (e) {
+      // API down / bad key / timeout → no summary this round (title falls back to
+      // layer A: the latest user instruction). Never spawns Haiku.
+      console.warn(`[current-task] LLM API 摘要失败：${e instanceof Error ? e.message : e}`);
+      return null;
+    }
   }
 }
 
@@ -234,20 +173,6 @@ function buildTranscript(messages: ClaudeMessage[]): string {
   if (!joined) return "";
   // frame it explicitly as data to summarize, not instructions to follow
   return `【会话记录开始】\n${joined}\n【会话记录结束】\n请只输出概括当前任务的一句中文短语。`;
-}
-
-/** Pull the result text out of `claude --output-format json` stdout. */
-function extractResult(stdout: string): string | null {
-  const t = stdout.trim();
-  if (!t) return null;
-  try {
-    const obj = JSON.parse(t) as { result?: unknown; is_error?: boolean };
-    if (obj.is_error) return null;
-    return typeof obj.result === "string" ? obj.result : null;
-  } catch {
-    // not JSON (older CLI / plain output) — take the first non-empty line
-    return t.split("\n").find((l) => l.trim()) ?? null;
-  }
 }
 
 function sanitize(label: string | null): string | undefined {

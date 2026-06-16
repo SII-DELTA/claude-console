@@ -112,18 +112,19 @@ export async function startAgent(config: AgentRuntimeConfig): Promise<AgentRunti
       (e) => console.warn(`[agent] 安装会话运行态 hooks 失败：${e instanceof Error ? e.message : e}`),
     );
   }
-  // Out-of-band "current task" observer (spec layer C): a one-shot Haiku per
-  // completed turn labels what each session is *currently* doing, so dashboard
-  // titles track the live task instead of the opening prompt. Read-only; never
-  // touches the driven session. Default on (env CURRENT_TASK_SUMMARY to disable).
+  // Out-of-band "current task" observer (spec layer C): per completed turn it asks
+  // the configured third-party LLM (LLM_API_*) to label what each session is doing,
+  // so dashboard titles track the live task. Read-only; never touches the driven
+  // session. API-ONLY — no Haiku fallback; without LLM_API_* it's simply off.
   let currentTask: CurrentTaskSummarizer | null = null;
-  if (CurrentTaskSummarizer.enabled()) {
-    // optional third-party OpenAI-compatible API (LLM_API_*); falls back to Haiku
-    const llm = resolveLLMFromEnv();
-    if (llm) console.log(`[agent] 当前任务摘要优先用 LLM API：${llm.describe()}（失败回退 Haiku）`);
-    currentTask = new CurrentTaskSummarizer({ store: claude, bus, llm });
+  const taskLlm = CurrentTaskSummarizer.enabled() ? resolveLLMFromEnv() : null;
+  if (taskLlm) {
+    console.log(`[agent] 当前任务摘要使用 LLM API：${taskLlm.describe()}`);
+    currentTask = new CurrentTaskSummarizer({ store: claude, bus, llm: taskLlm });
     claude.setCurrentTaskPredicate((id) => currentTask?.get(id));
     currentTask.start();
+  } else if (CurrentTaskSummarizer.enabled()) {
+    console.log("[agent] 当前任务摘要未启用：未配置 LLM_API_*（Haiku 摘要已移除）");
   }
   // restore dismissed questions so they stay cleared across restarts
   claude.setDismissedQuestions(store.listDismissedQuestionIds());
