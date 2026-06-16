@@ -168,6 +168,16 @@ export class HistoryStore {
         auth TEXT NOT NULL,
         createdAt TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS hidden_projects (
+        dir TEXT PRIMARY KEY,
+        hiddenAt TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS pinned_projects (
+        cwd TEXT PRIMARY KEY,
+        addedAt TEXT NOT NULL
+      );
     `);
     // Tool-approval columns on a pre-existing pending_permissions table (guarded).
     this.addColumnIfMissing("pending_permissions", "kind", "TEXT NOT NULL DEFAULT 'question'");
@@ -468,6 +478,38 @@ export class HistoryStore {
       questionId: string;
     }[];
     return rows.map((r) => r.questionId);
+  }
+
+  /* ---------------- project management (隐藏 / 新增) ---------------- */
+
+  hideProject(dir: string, hiddenAt: string): void {
+    this.db
+      .prepare(`INSERT INTO hidden_projects (dir,hiddenAt) VALUES (?,?) ON CONFLICT(dir) DO NOTHING`)
+      .run(dir, hiddenAt);
+  }
+
+  unhideProject(dir: string): void {
+    this.db.prepare(`DELETE FROM hidden_projects WHERE dir=?`).run(dir);
+  }
+
+  listHiddenProjects(): string[] {
+    const rows = this.db.prepare(`SELECT dir FROM hidden_projects`).all() as { dir: string }[];
+    return rows.map((r) => r.dir);
+  }
+
+  addPinnedProject(cwd: string, addedAt: string): void {
+    this.db
+      .prepare(`INSERT INTO pinned_projects (cwd,addedAt) VALUES (?,?) ON CONFLICT(cwd) DO NOTHING`)
+      .run(cwd, addedAt);
+  }
+
+  removePinnedProject(cwd: string): void {
+    this.db.prepare(`DELETE FROM pinned_projects WHERE cwd=?`).run(cwd);
+  }
+
+  listPinnedProjects(): string[] {
+    const rows = this.db.prepare(`SELECT cwd FROM pinned_projects`).all() as { cwd: string }[];
+    return rows.map((r) => r.cwd);
   }
 
   private rowToPending(r: RawPendingRow): PendingPermissionRecord {

@@ -7,6 +7,8 @@ import {
   ClaudeContinueBodySchema,
   ClaudeCreateBodySchema,
   ClaudeSwitchProjectBodySchema,
+  ClaudeProjectHideBodySchema,
+  ClaudeAddProjectBodySchema,
   ERROR_CODES,
   HealthResponseSchema,
   ListLogsQuerySchema,
@@ -248,6 +250,47 @@ export async function buildHttpApp(opts: BuildHttpOptions): Promise<FastifyInsta
       return { error: "project_not_found", code: ERROR_CODES.NOT_FOUND };
     }
     return { project, sessions: await opts.claude.listSessions() };
+  });
+
+  // Hide a project from the monitor (durable + in-memory), return refreshed list.
+  app.post("/claude/projects/hide", async (req, reply) => {
+    const parsed = ClaudeProjectHideBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: "bad_request", code: ERROR_CODES.BAD_REQUEST, issues: parsed.error.issues };
+    }
+    opts.store.hideProject(parsed.data.dir, new Date().toISOString());
+    opts.claude.addHiddenProject(parsed.data.dir);
+    return { projects: await opts.claude.listProjects() };
+  });
+
+  app.post("/claude/projects/unhide", async (req, reply) => {
+    const parsed = ClaudeProjectHideBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: "bad_request", code: ERROR_CODES.BAD_REQUEST, issues: parsed.error.issues };
+    }
+    opts.store.unhideProject(parsed.data.dir);
+    opts.claude.removeHiddenProject(parsed.data.dir);
+    return { projects: await opts.claude.listProjects() };
+  });
+
+  // Add (pin) a project by real cwd, so it shows even with 0 sessions.
+  app.post("/claude/projects/add", async (req, reply) => {
+    const parsed = ClaudeAddProjectBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: "bad_request", code: ERROR_CODES.BAD_REQUEST, issues: parsed.error.issues };
+    }
+    const cwd = parsed.data.cwd;
+    opts.store.addPinnedProject(cwd, new Date().toISOString());
+    opts.claude.addPinnedProject(cwd);
+    return { projects: await opts.claude.listProjects() };
+  });
+
+  // Filesystem directory browser for the project picker (folders only).
+  app.get<{ Querystring: { path?: string } }>("/claude/fs/list", async (req) => {
+    return opts.claude.listDir(req.query.path);
   });
 
   app.get("/claude/sessions", async () => {

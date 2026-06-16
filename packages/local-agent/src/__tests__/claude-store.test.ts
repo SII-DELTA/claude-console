@@ -289,6 +289,41 @@ describe("ClaudeStore", () => {
     await live.stop();
     expect(got.at(-1)?.blocks[0]).toEqual({ kind: "text", text: "done" });
   });
+
+  it("flags hidden projects and excludes their sessions from the overview", async () => {
+    const dir = encodeProjectDir(workspaceRoot);
+    expect((await store.listAllSessions()).length).toBe(1);
+    store.setHiddenProjects([dir]);
+    const projects = await store.listProjects();
+    expect(projects.find((p) => p.dir === dir)?.hidden).toBe(true);
+    // hidden project's sessions drop out of the cross-project overview
+    expect(await store.listAllSessions()).toHaveLength(0);
+    store.removeHiddenProject(dir);
+    expect((await store.listAllSessions()).length).toBe(1);
+  });
+
+  it("synthesizes a 0-session entry for a pinned cwd with no project dir yet", async () => {
+    const newCwd = "/Users/test/brand-new";
+    store.setPinnedProjects([newCwd]);
+    const p = (await store.listProjects()).find((x) => x.cwd === newCwd);
+    expect(p).toBeTruthy();
+    expect(p!.pinned).toBe(true);
+    expect(p!.sessionCount).toBe(0);
+    expect(p!.dir).toBe(encodeProjectDir(newCwd));
+  });
+
+  it("listDir returns folders only, with parent + home", async () => {
+    await fs.mkdir(join(root, "sub-a"), { recursive: true });
+    await fs.mkdir(join(root, "sub-b"), { recursive: true });
+    await fs.writeFile(join(root, "a-file.txt"), "x");
+    const res = await store.listDir(root);
+    expect(res.path).toBe(root);
+    expect(res.parent).toBe(join(root, ".."));
+    const names = res.entries.map((e) => e.name);
+    expect(names).toContain("sub-a");
+    expect(names).toContain("sub-b");
+    expect(names).not.toContain("a-file.txt"); // files excluded
+  });
 });
 
 async function waitFor(cond: () => boolean, timeoutMs: number): Promise<void> {

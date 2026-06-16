@@ -110,6 +110,10 @@ export const ClaudeProjectSchema = z.object({
   liveCount: z.number().int().nonnegative(),
   updatedAt: z.string(),
   active: z.boolean().optional(),
+  /** 用户在「项目管理」里隐藏了它 → 不在监控台总览/切换栏出现。 */
+  hidden: z.boolean().optional(),
+  /** 用户手动新增（pin）的项目，可能还没有任何会话。 */
+  pinned: z.boolean().optional(),
 });
 export type ClaudeProject = z.infer<typeof ClaudeProjectSchema>;
 
@@ -358,6 +362,36 @@ export const ClaudeSwitchProjectBodySchema = z.object({
   dir: z.string().min(1),
 });
 export type ClaudeSwitchProjectBody = z.infer<typeof ClaudeSwitchProjectBodySchema>;
+
+/** Hide / unhide a project from the monitor (by its encoded dir key). */
+export const ClaudeProjectHideBodySchema = z.object({
+  dir: z.string().min(1),
+});
+export type ClaudeProjectHideBody = z.infer<typeof ClaudeProjectHideBodySchema>;
+
+/** Add (pin) a project by its real cwd, so it shows even with 0 sessions. */
+export const ClaudeAddProjectBodySchema = z.object({
+  cwd: z.string().min(1),
+});
+export type ClaudeAddProjectBody = z.infer<typeof ClaudeAddProjectBodySchema>;
+
+/** One directory entry from the filesystem browser (folders only). */
+export const FsDirEntrySchema = z.object({
+  name: z.string(),
+  path: z.string(),
+});
+export type FsDirEntry = z.infer<typeof FsDirEntrySchema>;
+
+export const FsListResponseSchema = z.object({
+  /** absolute path that was listed */
+  path: z.string(),
+  /** parent dir, or null at filesystem root */
+  parent: z.string().nullable(),
+  /** the user's home dir (for the "~" quick root) */
+  home: z.string(),
+  entries: z.array(FsDirEntrySchema),
+});
+export type FsListResponse = z.infer<typeof FsListResponseSchema>;
 
 export const TranscribeResponseSchema = z.object({
   text: z.string(),

@@ -127,6 +127,9 @@ export async function startAgent(config: AgentRuntimeConfig): Promise<AgentRunti
   }
   // restore dismissed questions so they stay cleared across restarts
   claude.setDismissedQuestions(store.listDismissedQuestionIds());
+  // restore project hide/pin state (project management page)
+  claude.setHiddenProjects(store.listHiddenProjects());
+  claude.setPinnedProjects(store.listPinnedProjects());
   const password = config.password ?? process.env.MAC_AGENT_PASSWORD;
   const auth = new AuthManager(store, bus, { password });
   const sessions = new SessionManager(store, bus, {

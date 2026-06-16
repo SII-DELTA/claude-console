@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import { existsSync } from "node:fs";
-import { join, basename } from "node:path";
+import { join, basename, dirname, resolve as resolvePath } from "node:path";
 import { homedir } from "node:os";
 import chokidar, { type FSWatcher } from "chokidar";
 import {
@@ -55,6 +55,10 @@ export class ClaudeStore {
   private currentTaskPredicate: ((id: string) => string | undefined) | null = null;
   /** AskUserQuestion ids the user dismissed → excluded from the "question" attention */
   private dismissedQuestions = new Set<string>();
+  /** project dirs the user hid → excluded from monitor overview / switcher */
+  private hiddenDirs = new Set<string>();
+  /** real cwds the user manually added (pinned) → shown even with 0 sessions */
+  private pinnedCwds = new Set<string>();
 
   constructor(
     private workspaceRoot: string,
@@ -106,6 +110,26 @@ export class ClaudeStore {
     for (const id of ids) this.dismissedQuestions.add(id);
   }
 
+  /* ---------------- project hide / pin (durable state injected by runtime) ------- */
+  setHiddenProjects(dirs: Iterable<string>): void {
+    this.hiddenDirs = new Set(dirs);
+  }
+  addHiddenProject(dir: string): void {
+    this.hiddenDirs.add(dir);
+  }
+  removeHiddenProject(dir: string): void {
+    this.hiddenDirs.delete(dir);
+  }
+  setPinnedProjects(cwds: Iterable<string>): void {
+    this.pinnedCwds = new Set(cwds);
+  }
+  addPinnedProject(cwd: string): void {
+    this.pinnedCwds.add(cwd);
+  }
+  removePinnedProject(cwd: string): void {
+    this.pinnedCwds.delete(cwd);
+  }
+
   /** Current open (unanswered) AskUserQuestion ids for a session. */
   async getOpenQuestionIds(id: string): Promise<string[]> {
     if (!SAFE_ID.test(id)) return [];
@@ -133,16 +157,71 @@ export class ClaudeStore {
       : join(this.projectsRoot, encodeProjectDir(this.workspaceRoot));
   }
 
-  /** List all Claude Code projects under ~/.claude/projects. */
+  /** List all Claude Code projects under ~/.claude/projects (incl. hidden + pinned). */
   async listProjects(): Promise<ClaudeProject[]> {
     const activeDirName = this.activeDir ?? encodeProjectDir(this.workspaceRoot);
     const entries = await safeListDirs(this.projectsRoot);
-    const projects = await Promise.all(
+    const scanned = await Promise.all(
       entries.map((dir) => this.readProjectMeta(dir, dir === activeDirName)),
     );
-    return projects
-      .filter((p): p is ClaudeProject => !!p)
-      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    const byDir = new Map<string, ClaudeProject>();
+    for (const p of scanned) {
+      if (p) byDir.set(p.dir, { ...p, hidden: this.hiddenDirs.has(p.dir) });
+    }
+    // pinned cwds with no scanned project yet → synthesize an empty (0-session) entry
+    for (const cwd of this.pinnedCwds) {
+      const dir = encodeProjectDir(cwd);
+      const existing = byDir.get(dir);
+      if (existing) {
+        byDir.set(dir, { ...existing, pinned: true });
+      } else {
+        byDir.set(dir, {
+          dir,
+          cwd,
+          name: cwd.split("/").filter(Boolean).pop() ?? dir,
+          sessionCount: 0,
+          liveCount: 0,
+          updatedAt: new Date(0).toISOString(),
+          active: dir === activeDirName,
+          hidden: this.hiddenDirs.has(dir),
+          pinned: true,
+        });
+      }
+    }
+    return [...byDir.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  /** Browse a directory (folders only) for the project directory picker. */
+  async listDir(input?: string): Promise<{
+    path: string;
+    parent: string | null;
+    home: string;
+    entries: { name: string; path: string }[];
+  }> {
+    const home = homedir();
+    const raw = !input || input === "~" ? home : input.startsWith("~/") ? join(home, input.slice(2)) : input;
+    const path = resolvePath(raw);
+    const parent = path === "/" ? null : dirname(path);
+    let entries: { name: string; path: string }[] = [];
+    try {
+      const ents = await fs.readdir(path, { withFileTypes: true });
+      const dirs = await Promise.all(
+        ents.map(async (e) => {
+          let isDir = e.isDirectory();
+          if (!isDir && e.isSymbolicLink()) {
+            // resolve symlinks that point at a directory
+            isDir = (await safeStatIsDir(join(path, e.name)));
+          }
+          return isDir ? { name: e.name, path: join(path, e.name) } : null;
+        }),
+      );
+      entries = dirs
+        .filter((d): d is { name: string; path: string } => !!d)
+        .sort((a, b) => a.name.localeCompare(b.name));
+    } catch {
+      // unreadable dir → empty listing (still allow going up via parent)
+    }
+    return { path, parent, home, entries };
   }
 
   /** Switch the active project to the given encoded dir name. */
@@ -220,11 +299,12 @@ export class ClaudeStore {
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 
-  /** Absolute paths of every session jsonl under every project dir. */
-  private async allSessionFiles(): Promise<string[]> {
+  /** Absolute paths of every session jsonl under every (non-hidden) project dir. */
+  private async allSessionFiles(includeHidden = false): Promise<string[]> {
     const dirs = await safeListDirs(this.projectsRoot);
     const out: string[] = [];
     for (const d of dirs) {
+      if (!includeHidden && this.hiddenDirs.has(d)) continue; // monitor skips hidden projects
       const full = join(this.projectsRoot, d);
       for (const f of await safeList(full)) {
         if (f.endsWith(".jsonl")) out.push(join(full, f));
@@ -341,8 +421,9 @@ export class ClaudeStore {
     // active project via projectDir().
     const root = this.projectsRoot;
     await fs.mkdir(root, { recursive: true }).catch(() => {});
-    // seed offsets to current file sizes so we only stream *new* lines
-    for (const p of await this.allSessionFiles()) {
+    // seed offsets to current file sizes so we only stream *new* lines (all dirs,
+    // incl. hidden — so unhiding later doesn't replay old lines)
+    for (const p of await this.allSessionFiles(true)) {
       this.offsets.set(p, (await safeSize(p)) ?? 0);
     }
     // chokidar v4 dropped glob support — watch the root and filter in handlers.
@@ -422,6 +503,14 @@ async function safeListDirs(dir: string): Promise<string[]> {
     return ents.filter((e) => e.isDirectory()).map((e) => e.name);
   } catch {
     return [];
+  }
+}
+
+async function safeStatIsDir(p: string): Promise<boolean> {
+  try {
+    return (await fs.stat(p)).isDirectory();
+  } catch {
+    return false;
   }
 }
 
