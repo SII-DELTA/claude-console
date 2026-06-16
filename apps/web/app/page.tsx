@@ -10,6 +10,7 @@ import { Composer } from "../components/Composer";
 import { QuickActions } from "../components/QuickActions";
 import { ClaudeLogo } from "../components/ClaudeLogo";
 import { QuestionPanel, findPendingQuestions } from "../components/QuestionPanel";
+import { ToolApprovalPanel } from "../components/ToolApprovalPanel";
 import { UsageDisplay } from "../components/UsageDisplay";
 import { LoadingBadge } from "../components/LoadingBadge";
 import { BottomTabs } from "../components/BottomTabs";
@@ -70,9 +71,11 @@ function Console() {
     sendPrompt,
     interrupt,
     answerPermission,
+    answerToolApproval,
     dismissQuestion,
     closePermission,
     pendingPermission,
+    toolApproval,
     loadSessions,
     setConnection,
     clearError,
@@ -183,6 +186,8 @@ function Console() {
   // even while the turn is "streaming" — the turn is paused awaiting the answer).
   const bPermission =
     pendingPermission && pendingPermission.sessionId === selectedId ? pendingPermission : null;
+  // a non-AskUserQuestion tool awaiting allow/deny for the open session
+  const bApproval = toolApproval && toolApproval.sessionId === selectedId ? toolApproval : null;
   // 方案 A fallback: a headlessly-failed AskUserQuestion re-rendered from history.
   // Suppressed when B is active to avoid a duplicate picker.
   // Gated on the server-derived attention so a dismissed question hides the picker too.
@@ -448,6 +453,16 @@ function Console() {
               }}
             />
           </div>
+        )}
+
+        {bApproval && !bPermission && (
+          <ToolApprovalPanel
+            toolName={bApproval.toolName}
+            summary={bApproval.summary}
+            recovered={bApproval.live === false}
+            onDecision={(d) => void answerToolApproval(d)}
+            onClose={bApproval.live === false ? () => void answerToolApproval("deny") : undefined}
+          />
         )}
 
         {pendingQuestions && !composerLocked && (

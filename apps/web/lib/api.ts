@@ -3,6 +3,7 @@ import type {
   ClaudeImage,
   ClaudeMessage,
   ClaudePendingPermission,
+  ClaudeToolApproval,
   ClaudePermissionMode,
   ClaudeProject,
   ClaudeSession,
@@ -165,8 +166,20 @@ export class ApiClient {
   /** Recover pending interactive permissions for a session (survives reload/restart). */
   getClaudePendingPermission(
     id: string,
-  ): Promise<{ pending: ClaudePendingPermission[] }> {
+  ): Promise<{ pending: ClaudePendingPermission[]; approvals?: ClaudeToolApproval[] }> {
     return this.request("GET", `/claude/sessions/${id}/pending-permission`);
+  }
+
+  /** Answer a pending tool approval (non-AskUserQuestion): allow once / deny. */
+  answerClaudeToolApproval(
+    id: string,
+    requestId: string,
+    decision: "allow" | "deny",
+  ): Promise<{ ok: true }> {
+    return this.request("POST", `/claude/sessions/${id}/answer-tool-approval`, {
+      requestId,
+      decision,
+    });
   }
 
   /** Dismiss a session's lingering question(s) without answering (clears the badge). */

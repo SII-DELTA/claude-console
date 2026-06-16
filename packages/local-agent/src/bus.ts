@@ -46,6 +46,13 @@ export type BusEvents = {
     toolName: string,
     questions: import("@mac/shared").ClaudePermissionQuestion[],
   ) => void;
+  /** A non-AskUserQuestion tool is awaiting the user's allow/deny decision. */
+  "claude:tool_approval_request": (
+    sessionId: string,
+    requestId: string,
+    toolName: string,
+    summary: string,
+  ) => void;
   /** A pending permission request is no longer waiting (answered/cancelled/aborted). */
   "claude:permission_cancel": (sessionId: string, requestId: string) => void;
   /** Authoritative "a turn started/stopped" signal (driver busy transition). */

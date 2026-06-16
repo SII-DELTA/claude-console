@@ -51,6 +51,13 @@ const ATT = {
     tile: "bg-accent/15 text-accent",
     icon: (s: number) => <svg viewBox="0 0 24 24" width={s} height={s} {...sw}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>,
   },
+  approval: {
+    label: "待批准工具",
+    badge: "bg-accent/20 text-accent",
+    accent: "border-l-accent",
+    tile: "bg-accent/15 text-accent",
+    icon: (s: number) => <svg viewBox="0 0 24 24" width={s} height={s} {...sw}><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>,
+  },
   error: {
     label: "执行出错",
     badge: "bg-danger/20 text-danger",
@@ -242,6 +249,7 @@ export function Dashboard({
 
   const attentionOf = (s: ClaudeSession): AttKind | null => {
     if (ignored.has(s.id)) return null;
+    if (s.attention === "approval") return "approval";
     if (s.attention === "question") return "question";
     if (s.attention === "error") return "error";
     if (s.attention === "done" && !s.isLive && ageMs(s.updatedAt) < RECENT_DONE_MS) return "done";

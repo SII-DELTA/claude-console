@@ -21,6 +21,20 @@ describe("ApiClient", () => {
     });
   });
 
+  it("answerClaudeToolApproval posts the decision", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ ok: true }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const api = new ApiClient("http://x", "tok");
+    await api.answerClaudeToolApproval("sess1", "req9", "deny");
+    const call = (fetchMock.mock.calls as unknown as unknown[][])[0]!;
+    expect(call[0]).toBe("http://x/claude/sessions/sess1/answer-tool-approval");
+    const init = call[1] as RequestInit;
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({ requestId: "req9", decision: "deny" });
+  });
+
   it("throws on non-2xx", async () => {
     vi.stubGlobal(
       "fetch",

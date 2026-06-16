@@ -87,7 +87,7 @@ export const ClaudeSessionSchema = z.object({
    * - done:     非 live 且最后回合已完成（跑完待续写）
    * 缺省表示无需关注。
    */
-  attention: z.enum(["question", "error", "done"]).optional(),
+  attention: z.enum(["question", "approval", "error", "done"]).optional(),
 });
 export type ClaudeSession = z.infer<typeof ClaudeSessionSchema>;
 
@@ -299,8 +299,20 @@ export const ClaudePendingPermissionSchema = z.object({
 });
 export type ClaudePendingPermission = z.infer<typeof ClaudePendingPermissionSchema>;
 
+/** A recoverable pending tool-approval (allow/deny) for a non-AskUserQuestion tool. */
+export const ClaudeToolApprovalSchema = z.object({
+  requestId: z.string(),
+  toolName: z.string(),
+  /** Human-readable summary of the tool input (display only; not authoritative). */
+  summary: z.string(),
+  /** true: still answerable in-process; false: only persisted (process gone). */
+  live: z.boolean(),
+});
+export type ClaudeToolApproval = z.infer<typeof ClaudeToolApprovalSchema>;
+
 export const ClaudePendingPermissionsResponseSchema = z.object({
   pending: z.array(ClaudePendingPermissionSchema),
+  approvals: z.array(ClaudeToolApprovalSchema).optional(),
 });
 export type ClaudePendingPermissionsResponse = z.infer<
   typeof ClaudePendingPermissionsResponseSchema
@@ -313,6 +325,13 @@ export const ClaudeAnswerPermissionBodySchema = z.object({
   answers: z.record(z.string(), z.union([z.string(), z.array(z.string())])),
 });
 export type ClaudeAnswerPermissionBody = z.infer<typeof ClaudeAnswerPermissionBodySchema>;
+
+/** Body for answering a pending tool approval (allow once / deny). */
+export const ClaudeAnswerToolApprovalBodySchema = z.object({
+  requestId: z.string().min(1),
+  decision: z.enum(["allow", "deny"]),
+});
+export type ClaudeAnswerToolApprovalBody = z.infer<typeof ClaudeAnswerToolApprovalBodySchema>;
 
 export const ClaudeCreateBodySchema = z.object({
   prompt: z.string().min(1).max(50_000),
@@ -495,6 +514,15 @@ export const ServerClaudePermissionRequestSchema = z.object({
   questions: z.array(ClaudePermissionQuestionSchema),
 });
 
+/** A non-AskUserQuestion tool is awaiting the user's allow/deny decision. */
+export const ServerClaudeToolApprovalRequestSchema = z.object({
+  type: z.literal("server:claude_tool_approval_request"),
+  sessionId: z.string().min(1),
+  requestId: z.string().min(1),
+  toolName: z.string(),
+  summary: z.string(),
+});
+
 /** A previously-surfaced permission request is no longer pending (answered/cancelled). */
 export const ServerClaudePermissionCancelSchema = z.object({
   type: z.literal("server:claude_permission_cancel"),
@@ -536,6 +564,7 @@ export const ServerMessageSchema = z.discriminatedUnion("type", [
   ServerClaudeDriveErrorSchema,
   ServerClaudeRateLimitSchema,
   ServerClaudePermissionRequestSchema,
+  ServerClaudeToolApprovalRequestSchema,
   ServerClaudePermissionCancelSchema,
   ServerClaudeDrivingSchema,
   ServerErrorSchema,
