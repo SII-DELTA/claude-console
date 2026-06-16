@@ -233,8 +233,9 @@ function Console() {
     setComposeNew(false);
   }
 
-  // Mobile: 从屏幕左/右边缘水平滑动返回（跟手位移 + 回弹）。
-  const { ref: swipeRef, dx: swipeDx } = useEdgeSwipeBack(mobileDetail, goBack);
+  // Mobile: 从屏幕左/右边缘水平滑动返回（跟手位移 + 滑出/回弹动画）。
+  const { ref: swipeRef, dx: swipeDx, animating: swipeAnimating, exitMs: swipeExitMs } =
+    useEdgeSwipeBack(mobileDetail, goBack);
 
   return (
     <div className="flex h-screen overflow-hidden bg-bg text-ink flex-col md:flex-row">
@@ -314,11 +315,10 @@ function Console() {
       <main
         ref={swipeRef}
         className={`min-h-0 min-w-0 flex-1 flex-col md:flex ${mobileDetail ? "flex" : "hidden"}`}
-        style={
-          swipeDx
-            ? { transform: `translateX(${swipeDx}px)`, transition: "none" }
-            : { transition: "transform 0.2s ease-out" }
-        }
+        style={{
+          transform: swipeDx ? `translateX(${swipeDx}px)` : undefined,
+          transition: swipeAnimating ? `transform ${swipeExitMs}ms ease-out` : "none",
+        }}
       >
         {/* Mobile header */}
         <header className="flex shrink-0 items-center gap-2 border-b border-line bg-bg-alt px-2 py-2 pt-safe md:hidden">
