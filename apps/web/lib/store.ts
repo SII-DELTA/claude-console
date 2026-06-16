@@ -130,6 +130,8 @@ interface AppState {
   setMobileTab: (t: MobileTab) => void;
   setPermissionMode: (m: ClaudePermissionMode) => void;
   connectWs: () => void;
+  /** Re-check the socket when the tab returns to the foreground (mobile resume). */
+  handleVisible: () => void;
   loadProjects: () => Promise<void>;
   switchProject: (dir: string) => Promise<void>;
   /** restore project + session from the URL (?p=&s=) on first load */
@@ -297,7 +299,13 @@ export const useAppStore = create<AppState>((set, get) => ({
         set({ wsConnected: true });
         // a picker may have been raised while we were disconnected — recover it
         const sel = get().selectedId;
-        if (sel) void get().refreshPendingPermission(sel);
+        if (sel) {
+          void get().refreshPendingPermission(sel);
+          // resync the open conversation: events broadcast while we were offline
+          // (claude:message / delta / drive_done) were missed, so pull the tail.
+          const api = get().api;
+          if (api) void revalidateTail(api, sel, set, get);
+        }
       },
       onClose: () => {
         set({ wsConnected: false });
@@ -311,6 +319,21 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
     ws.open();
     set({ ws });
+  },
+
+  handleVisible() {
+    if (typeof document !== "undefined" && document.hidden) return;
+    const { connection, ws, selectedId, api } = get();
+    if (!connection) return;
+    // Mobile freezes JS timers while backgrounded, so the 3s reconnect may never
+    // have fired and `close` may not have surfaced. On returning to the foreground,
+    // reconnect immediately if the socket isn't open; otherwise just resync the tail.
+    if (!ws || !ws.isOpen()) {
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      get().connectWs();
+    } else if (selectedId && api) {
+      void revalidateTail(api, selectedId, set, get);
+    }
   },
 
   async loadSessions() {

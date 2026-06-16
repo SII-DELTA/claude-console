@@ -16,6 +16,7 @@ import { BottomTabs } from "../components/BottomTabs";
 import { Dashboard } from "../components/Dashboard";
 import { SettingsPage } from "../components/SettingsPage";
 import { notify } from "../lib/notify";
+import { onPushOpenSession } from "../lib/push";
 import { useEdgeSwipeBack } from "../lib/useEdgeSwipeBack";
 
 export default function Page() {
@@ -138,6 +139,17 @@ function Console() {
     if (!ws) connectWs();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Returning to the foreground (mobile resume): reconnect a dead socket and
+  // resync the open conversation that may have frozen while backgrounded.
+  useEffect(() => {
+    const onVisible = () => useAppStore.getState().handleVisible();
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, []);
+
+  // clicking a push notification asks the SW to open that session
+  useEffect(() => onPushOpenSession((sid) => void selectSession(sid)), [selectSession]);
 
   // load projects, restore the project/session from the URL, then poll sessions
   useEffect(() => {

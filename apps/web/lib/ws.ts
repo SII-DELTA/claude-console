@@ -9,10 +9,18 @@ export interface WsClientOptions {
   onError?: (err: Event) => void;
 }
 
+/** App-level heartbeat: how often we ping the server. A dead socket is detected
+ * within ~2× this (no pong by the next tick → terminate → reconnect). Kept below
+ * the server's own 30s ping so we notice a silent drop first. */
+const PING_INTERVAL_MS = 20_000;
+
 export class WsClient {
   private socket: WebSocket | null = null;
   /** Messages queued while the socket is still connecting. */
   private readonly pending: string[] = [];
+  private pingTimer: ReturnType<typeof setInterval> | null = null;
+  /** True once a ping is sent and still awaiting its pong (cleared on pong). */
+  private awaitingPong = false;
 
   constructor(private readonly opts: WsClientOptions) {}
 
@@ -25,6 +33,11 @@ export class WsClient {
     ws.addEventListener("message", (ev) => {
       try {
         const msg = JSON.parse(typeof ev.data === "string" ? ev.data : "") as ServerMessage;
+        // Heartbeat reply: consume locally, don't surface to the app.
+        if (msg.type === "server:pong") {
+          this.awaitingPong = false;
+          return;
+        }
         this.opts.onMessage(msg);
       } catch {
         /* ignore malformed frames */
@@ -37,15 +50,51 @@ export class WsClient {
         ws.send(payload);
       }
       this.pending.length = 0;
+      this.startHeartbeat();
       this.opts.onOpen?.();
     });
 
-    ws.addEventListener("close", () => this.opts.onClose?.());
+    ws.addEventListener("close", () => {
+      this.stopHeartbeat();
+      this.opts.onClose?.();
+    });
 
     ws.addEventListener("error", (ev) => {
       console.error("[WsClient] socket error", ev);
       this.opts.onError?.(ev);
     });
+  }
+
+  /** Socket is open and usable right now. */
+  isOpen(): boolean {
+    return this.socket?.readyState === WebSocket.OPEN;
+  }
+
+  private startHeartbeat(): void {
+    this.stopHeartbeat();
+    this.awaitingPong = false;
+    this.pingTimer = setInterval(() => {
+      if (this.socket?.readyState !== WebSocket.OPEN) return;
+      // Previous ping never got a pong → the link is silently dead. Closing it
+      // triggers onClose, which schedules the reconnect.
+      if (this.awaitingPong) {
+        this.stopHeartbeat();
+        try {
+          this.socket.close();
+        } catch {
+          /* noop */
+        }
+        return;
+      }
+      this.awaitingPong = true;
+      this.socket.send(JSON.stringify({ type: "client:ping", ts: Date.now() }));
+    }, PING_INTERVAL_MS);
+  }
+
+  private stopHeartbeat(): void {
+    if (this.pingTimer) clearInterval(this.pingTimer);
+    this.pingTimer = null;
+    this.awaitingPong = false;
   }
 
   send(message: object): void {
@@ -59,6 +108,7 @@ export class WsClient {
   }
 
   close(): void {
+    this.stopHeartbeat();
     this.pending.length = 0;
     this.socket?.close();
     this.socket = null;
