@@ -321,6 +321,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       token: conn.token,
       onOpen: () => {
         set({ wsConnected: true });
+        // Resync the dashboard: session_updated events broadcast while we were
+        // offline were missed, and an initial load that failed during an agent
+        // restart would have left the lists empty. Re-pull so cards reappear.
+        void get().loadProjects();
+        void get().loadSessions();
+        void get().loadAllSessions();
         // a picker may have been raised while we were disconnected — recover it
         const sel = get().selectedId;
         if (sel) {
@@ -354,9 +360,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     // reconnect immediately if the socket isn't open; otherwise just resync the tail.
     if (!ws || !ws.isOpen()) {
       if (reconnectTimer) clearTimeout(reconnectTimer);
-      get().connectWs();
-    } else if (selectedId && api) {
-      void revalidateTail(api, selectedId, set, get);
+      get().connectWs(); // onOpen refetches the lists
+    } else {
+      // socket alive but timers were frozen — refresh the dashboard lists + tail
+      void get().loadSessions();
+      void get().loadAllSessions();
+      if (selectedId && api) void revalidateTail(api, selectedId, set, get);
     }
   },
 
