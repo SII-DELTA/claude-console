@@ -5,6 +5,8 @@ import type { ClaudePermissionMode } from "@mac/shared";
 import { useAppStore, type EnterBehavior } from "../lib/store";
 import { getInAppNotify, setInAppNotify } from "../lib/notify";
 import { disablePush, enablePush, getPushStatus, isIosNonStandalone, isPushSupported, type PushStatus } from "../lib/push";
+import { collectNotifyDiagnostics, sendTestNotification, type NotifyDiagnostics } from "../lib/notify-diagnostics";
+import { getDebugConsole, setDebugConsole } from "../lib/debug-log";
 
 /** Reusable iOS-style switch (track + knob), correctly centered. */
 function Toggle({ on, onClick, disabled, label }: { on: boolean; onClick: () => void; disabled?: boolean; label: string }) {
@@ -56,6 +58,8 @@ export function SettingsPage({
       </section>
 
       <PushSection />
+
+      <DiagnosticsSection />
 
       <GeneralSection />
 
@@ -162,7 +166,11 @@ function GeneralSection() {
   const enterBehavior = useAppStore((s) => s.enterBehavior);
   const setEnterBehavior = useAppStore((s) => s.setEnterBehavior);
   const [inApp, setInApp] = useState(true);
-  useEffect(() => setInApp(getInAppNotify()), []);
+  const [dbg, setDbg] = useState(false);
+  useEffect(() => {
+    setInApp(getInAppNotify());
+    setDbg(getDebugConsole());
+  }, []);
 
   return (
     <section className="mb-5">
@@ -219,6 +227,130 @@ function GeneralSection() {
             label="前台通知开关"
           />
         </div>
+
+        <div className="flex items-center gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px] text-ink">调试控制台</div>
+            <div className="mt-0.5 text-[11px] text-ink-faint">页面浮出可查看 console 日志与网络请求；手机排查用。</div>
+          </div>
+          <Toggle
+            on={dbg}
+            onClick={() => {
+              const v = !dbg;
+              setDebugConsole(v);
+              setDbg(v);
+            }}
+            label="调试控制台开关"
+          />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function DiagRow({ label, value, ok }: { label: string; value: string; ok?: boolean | null }) {
+  const tone = ok == null ? "text-ink-dim" : ok ? "text-success" : "text-danger";
+  return (
+    <div className="flex items-center gap-3 py-1 text-[12px]">
+      <span className="shrink-0 text-ink-faint">{label}</span>
+      <span className={`ml-auto truncate font-mono ${tone}`}>{value}</span>
+    </div>
+  );
+}
+
+function DiagnosticsSection() {
+  const api = useAppStore((s) => s.api);
+  const [d, setD] = useState<NotifyDiagnostics | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const refresh = async () => {
+    setD(await collectNotifyDiagnostics(api ?? null));
+  };
+  useEffect(() => {
+    void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api]);
+
+  async function requestPerm() {
+    if (typeof window === "undefined" || !("Notification" in window)) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      const p = await Notification.requestPermission();
+      setMsg(`授权结果：${p}`);
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resubscribe() {
+    if (!api) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await enablePush(api);
+      setMsg(r.ok ? "已重新注册并订阅推送" : `订阅失败：${r.reason ?? "未知"}`);
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function test() {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await sendTestNotification();
+      setMsg(r.ok ? "已发送测试通知（页面隐藏时更明显）" : `测试失败：${r.reason}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const btn = "rounded-lg border border-line px-2.5 py-1.5 text-[12px] text-ink-dim hover:bg-bg-raised disabled:opacity-40";
+
+  return (
+    <section className="mb-5">
+      <h2 className="mb-2 text-[12px] font-semibold text-ink-dim">通知诊断</h2>
+      <div className="rounded-xl border border-line bg-bg-alt p-3">
+        {!d ? (
+          <div className="py-2 text-[12px] text-ink-faint">采集中…</div>
+        ) : (
+          <div className="divide-y divide-line/30">
+            <DiagRow label="安全上下文" value={String(d.isSecureContext)} ok={d.isSecureContext} />
+            <DiagRow label="通知 API" value={String(d.hasNotificationApi)} ok={d.hasNotificationApi} />
+            <DiagRow label="通知权限" value={d.permission} ok={d.permission === "granted"} />
+            <DiagRow label="SW 支持" value={String(d.hasServiceWorker)} ok={d.hasServiceWorker} />
+            <DiagRow label="SW 已注册" value={String(d.swRegistered)} ok={d.swRegistered} />
+            <DiagRow label="推送已订阅" value={String(d.pushSubscribed)} ok={d.pushSubscribed} />
+            {d.swError && <DiagRow label="SW 错误" value={d.swError} ok={false} />}
+            <DiagRow
+              label="后端推送"
+              value={d.backendError ? "请求失败" : d.backendEnabled == null ? "—" : String(d.backendEnabled)}
+              ok={d.backendError ? false : d.backendEnabled}
+            />
+            <DiagRow label="前台通知开关" value={d.inAppNotify ? "开" : "关"} ok={d.inAppNotify} />
+            <DiagRow label="推送本地标记" value={d.pushActiveLs ?? "null"} ok={d.pushActiveLs === "1"} />
+            <DiagRow label="页面隐藏" value={String(d.documentHidden)} />
+          </div>
+        )}
+        <div className="mt-2.5 flex flex-wrap gap-1.5">
+          <button onClick={() => void refresh()} disabled={busy} className={btn}>
+            刷新
+          </button>
+          <button onClick={() => void requestPerm()} disabled={busy} className={btn}>
+            请求通知授权
+          </button>
+          <button onClick={() => void resubscribe()} disabled={busy || !api} className={btn}>
+            重新订阅推送
+          </button>
+          <button onClick={() => void test()} disabled={busy} className={btn}>
+            发送测试通知
+          </button>
+        </div>
+        {msg && <p className="mt-2 text-[11px] text-ink-dim">{msg}</p>}
       </div>
     </section>
   );

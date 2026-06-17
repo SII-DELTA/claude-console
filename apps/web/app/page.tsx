@@ -21,6 +21,8 @@ import { SessionsPage } from "../components/SessionsPage";
 import { notify } from "../lib/notify";
 import { onPushOpenSession } from "../lib/push";
 import { useEdgeSwipeBack } from "../lib/useEdgeSwipeBack";
+import { DebugConsolePanel } from "../components/DebugConsolePanel";
+import { getDebugConsole, subscribeDebugConsole } from "../lib/debug-log";
 
 export default function Page() {
   const hydrated = useHydrated();
@@ -273,6 +275,12 @@ function Console() {
   // Mobile: 从屏幕左/右边缘水平滑动返回（跟手位移 + 滑出/回弹动画）。
   const { ref: swipeRef, dx: swipeDx, animating: swipeAnimating, exitMs: swipeExitMs } =
     useEdgeSwipeBack(mobileDetail, goBack);
+
+  const [debugConsole, setDebugConsoleOn] = useState(false);
+  useEffect(() => {
+    setDebugConsoleOn(getDebugConsole());
+    return subscribeDebugConsole(setDebugConsoleOn);
+  }, []);
 
   return (
     <div className="flex h-screen overflow-hidden bg-bg text-ink flex-col md:flex-row">
@@ -570,6 +578,7 @@ function Console() {
           }}
         />
       )}
+      {debugConsole && <DebugConsolePanel />}
     </div>
   );
 }
