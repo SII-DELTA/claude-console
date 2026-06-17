@@ -58,6 +58,7 @@ function Console() {
     allSessions,
     dashboardFocus,
     setDashboardFocus,
+    setSessionsFocus,
     loadAllSessions,
     selectedId,
     messages,
@@ -326,6 +327,7 @@ function Console() {
               <ProjectsPage
                 onOpenProject={(dir) => {
                   void switchProject(dir);
+                  setSessionsFocus(dir);
                   setMobileTab("sessions");
                 }}
               />
