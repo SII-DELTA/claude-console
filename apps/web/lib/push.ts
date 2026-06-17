@@ -29,7 +29,19 @@ async function registration(): Promise<ServiceWorkerRegistration> {
   return existing ?? (await navigator.serviceWorker.register("/sw.js"));
 }
 
+/** Last resolved push status, so reopening Settings can render instantly without a toggle re-animation. */
+let cachedPushStatus: PushStatus | null = null;
+export function getCachedPushStatus(): PushStatus | null {
+  return cachedPushStatus;
+}
+
 export async function getPushStatus(): Promise<PushStatus> {
+  const status = await computePushStatus();
+  cachedPushStatus = status;
+  return status;
+}
+
+async function computePushStatus(): Promise<PushStatus> {
   if (!isPushSupported()) return "unsupported";
   if (Notification.permission === "denied") return "denied";
   if (Notification.permission === "default") return "default";

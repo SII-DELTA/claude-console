@@ -20,6 +20,19 @@ export type NotifyDiagnostics = {
   documentHidden: boolean;
 };
 
+/** Last collected snapshot, so reopening Settings renders instantly instead of flashing "采集中…". */
+let cachedDiagnostics: NotifyDiagnostics | null = null;
+export function getCachedDiagnostics(): NotifyDiagnostics | null {
+  return cachedDiagnostics;
+}
+
+/** True when two snapshots are field-for-field equal (used to skip no-op re-renders). */
+export function diagnosticsEqual(a: NotifyDiagnostics | null, b: NotifyDiagnostics | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (Object.keys(a) as (keyof NotifyDiagnostics)[]).every((k) => a[k] === b[k]);
+}
+
 export async function collectNotifyDiagnostics(api: ApiClient | null): Promise<NotifyDiagnostics> {
   const hasNotificationApi = typeof window !== "undefined" && "Notification" in window;
   const hasServiceWorker = typeof navigator !== "undefined" && "serviceWorker" in navigator;
@@ -61,6 +74,7 @@ export async function collectNotifyDiagnostics(api: ApiClient | null): Promise<N
     }
   }
 
+  cachedDiagnostics = d;
   return d;
 }
 

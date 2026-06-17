@@ -4,8 +4,8 @@ import { useEffect, useState } from "react";
 import type { ClaudePermissionMode } from "@mac/shared";
 import { useAppStore, type EnterBehavior } from "../lib/store";
 import { getInAppNotify, setInAppNotify } from "../lib/notify";
-import { disablePush, enablePush, getPushStatus, isIosNonStandalone, isPushSupported, type PushStatus } from "../lib/push";
-import { collectNotifyDiagnostics, sendTestNotification, type NotifyDiagnostics } from "../lib/notify-diagnostics";
+import { disablePush, enablePush, getCachedPushStatus, getPushStatus, isIosNonStandalone, isPushSupported, type PushStatus } from "../lib/push";
+import { collectNotifyDiagnostics, diagnosticsEqual, getCachedDiagnostics, sendTestNotification, type NotifyDiagnostics } from "../lib/notify-diagnostics";
 import { getDebugConsole, setDebugConsole } from "../lib/debug-log";
 
 /** Reusable iOS-style switch (track + knob), correctly centered. */
@@ -92,12 +92,12 @@ export function SettingsPage({
 
 function PushSection() {
   const api = useAppStore((s) => s.api);
-  const [status, setStatus] = useState<PushStatus>("unsupported");
+  const [status, setStatus] = useState<PushStatus>(() => getCachedPushStatus() ?? "unsupported");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
   useEffect(() => {
-    void getPushStatus().then(setStatus);
+    void getPushStatus().then((s) => setStatus((prev) => (prev === s ? prev : s)));
   }, []);
 
   const on = status === "subscribed";
@@ -165,12 +165,8 @@ function GeneralSection() {
   const setInitialMessages = useAppStore((s) => s.setInitialMessages);
   const enterBehavior = useAppStore((s) => s.enterBehavior);
   const setEnterBehavior = useAppStore((s) => s.setEnterBehavior);
-  const [inApp, setInApp] = useState(true);
-  const [dbg, setDbg] = useState(false);
-  useEffect(() => {
-    setInApp(getInAppNotify());
-    setDbg(getDebugConsole());
-  }, []);
+  const [inApp, setInApp] = useState(() => getInAppNotify());
+  const [dbg, setDbg] = useState(() => getDebugConsole());
 
   return (
     <section className="mb-5">
@@ -260,12 +256,13 @@ function DiagRow({ label, value, ok }: { label: string; value: string; ok?: bool
 
 function DiagnosticsSection() {
   const api = useAppStore((s) => s.api);
-  const [d, setD] = useState<NotifyDiagnostics | null>(null);
+  const [d, setD] = useState<NotifyDiagnostics | null>(() => getCachedDiagnostics());
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
   const refresh = async () => {
-    setD(await collectNotifyDiagnostics(api ?? null));
+    const next = await collectNotifyDiagnostics(api ?? null);
+    setD((prev) => (diagnosticsEqual(prev, next) ? prev : next));
   };
   useEffect(() => {
     void refresh();
