@@ -10,8 +10,6 @@ import { WsBridge } from "./ws-bridge.js";
 import { buildHttpApp } from "./http-server.js";
 import { ClaudeStore } from "./claude-store.js";
 import { ClaudeDriver } from "./claude-driver.js";
-import { CurrentTaskSummarizer } from "./current-task.js";
-import { resolveLLMFromEnv } from "./llm-client.js";
 import { SessionLiveness } from "./session-liveness.js";
 import { installLivenessHooks } from "./hooks-installer.js";
 import { PushManager } from "./push-manager.js";
@@ -112,20 +110,8 @@ export async function startAgent(config: AgentRuntimeConfig): Promise<AgentRunti
       (e) => console.warn(`[agent] 安装会话运行态 hooks 失败：${e instanceof Error ? e.message : e}`),
     );
   }
-  // Out-of-band "current task" observer (spec layer C): per completed turn it asks
-  // the configured third-party LLM (LLM_API_*) to label what each session is doing,
-  // so dashboard titles track the live task. Read-only; never touches the driven
-  // session. API-ONLY — no Haiku fallback; without LLM_API_* it's simply off.
-  let currentTask: CurrentTaskSummarizer | null = null;
-  const taskLlm = CurrentTaskSummarizer.enabled() ? resolveLLMFromEnv() : null;
-  if (taskLlm) {
-    console.log(`[agent] 当前任务摘要使用 LLM API：${taskLlm.describe()}`);
-    currentTask = new CurrentTaskSummarizer({ store: claude, bus, llm: taskLlm });
-    claude.setCurrentTaskPredicate((id) => currentTask?.get(id));
-    currentTask.start();
-  } else if (CurrentTaskSummarizer.enabled()) {
-    console.log("[agent] 当前任务摘要未启用：未配置 LLM_API_*（Haiku 摘要已移除）");
-  }
+  // Dashboard card titles use Claude Code's native ai-title (maintained per session,
+  // persisted in the jsonl, free). No external summarizer.
   // restore dismissed questions so they stay cleared across restarts
   claude.setDismissedQuestions(store.listDismissedQuestionIds());
   // restore project hide/pin state (project management page)
@@ -225,7 +211,6 @@ export async function startAgent(config: AgentRuntimeConfig): Promise<AgentRunti
     async stop() {
       sessions.destroyAll();
       driver.destroyAll();
-      currentTask?.stop();
       liveness.stop();
       await claude.stop();
       await ws.close();

@@ -18,7 +18,7 @@ function relTime(iso: string): string {
 }
 
 function cardTitle(s: ClaudeSession): string {
-  return s.currentTask || s.lastUserText || s.title;
+  return s.aiTitle || s.lastUserText || s.title;
 }
 
 /* ── custom group icons (hand-drawn SVG) ─────────────────────────────── */

@@ -80,10 +80,10 @@ export const ClaudeSessionSchema = z.object({
   /** 本 agent 的 driver 此刻正在跑一轮（write→done 之间）。权威的"运行中"信号。 */
   driving: z.boolean().optional(),
   preview: z.string().optional(),
-  /** 最近一条用户指令（截断）。监控台标题优先于开局首句，反映「当前在做什么」。 */
+  /** 最近一条用户指令（截断）。无原生 ai-title 时作为标题兜底。 */
   lastUserText: z.string().optional(),
-  /** 旁路 Haiku 观察员对当前子任务的一句话摘要（≤24 字）。最精准的动态标题。 */
-  currentTask: z.string().optional(),
+  /** Claude Code 原生维护的会话标题（jsonl 的 ai-title 行）。监控台标题首选。 */
+  aiTitle: z.string().optional(),
   /** 运行中会话的最近一个工具动作（友好串，如「编辑 Dashboard.tsx」）。 */
   lastActivity: z.string().optional(),
   /** 最后一条 assistant 文本首行（已完成会话的结果摘要）。 */

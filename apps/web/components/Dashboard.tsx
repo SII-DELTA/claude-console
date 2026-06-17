@@ -27,9 +27,9 @@ function projName(cwd: string): string {
   return parts[parts.length - 1] || cwd;
 }
 
-/** Dynamic card title: Haiku summary → latest user instruction → opening title. */
+/** Card title: Claude Code's native ai-title → latest user instruction → opening title. */
 function cardTitle(s: ClaudeSession): string {
-  return s.currentTask || s.lastUserText || s.title;
+  return s.aiTitle || s.lastUserText || s.title;
 }
 
 /* ── icons ─────────────────────────────────────────────────────────── */

@@ -51,8 +51,6 @@ export class ClaudeStore {
   private livenessAlivePredicate: ((id: string) => boolean) | null = null;
   /** predicate injected by the runtime: does this session have a pending tool approval? */
   private pendingApprovalPredicate: ((id: string) => boolean) | null = null;
-  /** predicate injected by the runtime: the Haiku observer's current-task summary. */
-  private currentTaskPredicate: ((id: string) => string | undefined) | null = null;
   /** AskUserQuestion ids the user dismissed → excluded from the "question" attention */
   private dismissedQuestions = new Set<string>();
   /** project dirs the user hid → excluded from monitor overview / switcher */
@@ -93,11 +91,6 @@ export class ClaudeStore {
   /** Lets the runtime tell us which sessions have a pending tool approval (not in jsonl). */
   setPendingApprovalPredicate(fn: (id: string) => boolean): void {
     this.pendingApprovalPredicate = fn;
-  }
-
-  /** Lets the runtime supply the Haiku observer's current-task summary per session. */
-  setCurrentTaskPredicate(fn: (id: string) => string | undefined): void {
-    this.currentTaskPredicate = fn;
   }
 
   /** Seed the dismissed-question set (from durable storage at startup). */
@@ -395,7 +388,7 @@ export class ClaudeStore {
       // dynamic "current task" layers: A = latest user instruction, C = Haiku summary,
       // B = running activity / done result (frontend picks per state).
       lastUserText: deriveLastUser(acc),
-      currentTask: this.currentTaskPredicate?.(id) || undefined,
+      aiTitle: acc.aiTitle, // Claude Code's native maintained session title (free, persisted)
       lastActivity: deriveActivity(acc),
       lastResult: deriveResult(acc),
       // a pending tool approval (runtime control-protocol state, not in the jsonl)
