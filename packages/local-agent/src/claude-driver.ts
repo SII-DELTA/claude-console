@@ -50,6 +50,9 @@ export interface ToolApprovalView {
 
 /** Kill a warm process after this much inactivity to free memory. */
 const IDLE_TIMEOUT_MS = 5 * 60_000;
+/** Don't prewarm sessions whose transcript exceeds this — the cold `--resume` parse
+ * cost outweighs the latency saved, and the user may never continue them. */
+const PREWARM_MAX_BYTES = 8 * 1024 * 1024;
 
 interface WarmProc {
   proc: ChildProcessWithoutNullStreams;
@@ -172,12 +175,18 @@ export class ClaudeDriver {
    * config load happen off the critical path while the user reads/types.
    * No-op if already warm or the session is live elsewhere (would conflict).
    */
-  async prewarm(sessionId: string): Promise<boolean> {
+  async prewarm(sessionId: string, mode?: string): Promise<boolean> {
     if (this.procs.has(sessionId)) return false;
     if (await this.opts.store.isLive(sessionId)) return false;
+    // Skip huge transcripts: `claude --resume` would parse the whole JSONL just to sit
+    // idle — not worth the CPU/IO when the user may never continue this session.
+    const size = await this.opts.store.sessionFileSize(sessionId);
+    if (size != null && size > PREWARM_MAX_BYTES) return false;
     const detail = await this.opts.store.getSession(sessionId);
     if (!detail) return false;
-    this.spawnWarm(sessionId, ["--resume", sessionId], detail.session.cwd);
+    // Spawn with the mode the client will actually use, so the first send doesn't kill
+    // and cold-resume this process on a mode mismatch (wasting the whole prewarm).
+    this.spawnWarm(sessionId, ["--resume", sessionId], detail.session.cwd, mode);
     this.touch(sessionId); // arm idle reaper so an unused prewarm gets cleaned up
     return true;
   }

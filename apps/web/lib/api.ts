@@ -256,9 +256,10 @@ export class ApiClient {
     });
   }
 
-  /** Pre-spawn the warm process so the first prompt skips process startup. */
-  prewarmClaudeSession(id: string): Promise<{ warmed: boolean }> {
-    return this.request("POST", `/claude/sessions/${id}/prewarm`);
+  /** Pre-spawn the warm process so the first prompt skips process startup. Pass the mode
+   * the user will use so the warm process isn't killed + cold-resumed on a mismatch. */
+  prewarmClaudeSession(id: string, permissionMode?: ClaudePermissionMode): Promise<{ warmed: boolean }> {
+    return this.request("POST", `/claude/sessions/${id}/prewarm`, permissionMode ? { permissionMode } : undefined);
   }
 
   /** Transcribe 16k mono PCM (base64) via Tencent ASR. */

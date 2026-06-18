@@ -469,6 +469,12 @@ export class ClaudeStore {
     return m != null && nowMs() - m < LIVE_WINDOW_MS;
   }
 
+  /** Cheap JSONL byte size (stat only, no fold) — used to skip prewarming huge sessions. */
+  async sessionFileSize(id: string): Promise<number | null> {
+    if (!SAFE_ID.test(id)) return null;
+    return safeSize(this.sessionFile(id));
+  }
+
   async start(): Promise<void> {
     if (this.watcher) return;
     // Watch the WHOLE projects root (depth 1) so the dashboard's cross-project

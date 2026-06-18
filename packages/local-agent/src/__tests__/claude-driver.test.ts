@@ -65,6 +65,7 @@ describe("ClaudeDriver", () => {
     const spawnFn = vi.fn(() => proc) as any;
     const store = {
       isLive: vi.fn(async () => false),
+      sessionFileSize: vi.fn(async () => 0),
       getSession: vi.fn(async () => ({ session: { cwd: "/ws" } })),
       refreshSession: vi.fn(async () => {}),
     } as any;
@@ -210,6 +211,7 @@ describe("ClaudeDriver interactive permissions (方案 B)", () => {
     const spawnFn = vi.fn(() => proc) as any;
     const store = {
       isLive: vi.fn(async () => false),
+      sessionFileSize: vi.fn(async () => 0),
       getSession: vi.fn(async () => ({ session: { cwd: "/ws" } })),
       refreshSession: vi.fn(async () => {}),
     } as any;

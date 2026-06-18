@@ -557,10 +557,13 @@ export async function buildHttpApp(opts: BuildHttpOptions): Promise<FastifyInsta
     },
   );
 
-  app.post<{ Params: { id: string } }>("/claude/sessions/:id/prewarm", async (req) => {
-    const warmed = await opts.driver.prewarm(req.params.id);
-    return { warmed };
-  });
+  app.post<{ Params: { id: string }; Body: { permissionMode?: string } }>(
+    "/claude/sessions/:id/prewarm",
+    async (req) => {
+      const warmed = await opts.driver.prewarm(req.params.id, req.body?.permissionMode);
+      return { warmed };
+    },
+  );
 
   app.post<{ Params: { id: string } }>("/claude/sessions/:id/interrupt", async (req, reply) => {
     const ok = opts.driver.interrupt(req.params.id);

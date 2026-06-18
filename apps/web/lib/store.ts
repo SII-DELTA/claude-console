@@ -605,7 +605,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         // only for idle sessions not already driven elsewhere
         if (!res.session.isLive && !res.session.drivenByAgent) {
           prewarmTimer = setTimeout(() => {
-            if (get().selectedId === id) void api.prewarmClaudeSession(id).catch(() => {});
+            if (get().selectedId === id) void api.prewarmClaudeSession(id, get().permissionMode).catch(() => {});
           }, 1200);
         }
       }
