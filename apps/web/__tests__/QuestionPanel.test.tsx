@@ -34,8 +34,9 @@ describe("findPendingQuestions", () => {
 
   it("returns the questions when there is no tool_result yet", () => {
     const qs = findPendingQuestions([assistantWithAsk]);
-    expect(qs).toHaveLength(1);
-    expect(qs![0]!.options.map((o) => o.label)).toEqual(["A", "B"]);
+    expect(qs!.questions).toHaveLength(1);
+    expect(qs!.id).toBe("tu_1");
+    expect(qs!.questions[0]!.options.map((o) => o.label)).toEqual(["A", "B"]);
   });
 
   it("still returns questions when the only result is an error (headless 'Answer questions?')", () => {
@@ -43,7 +44,7 @@ describe("findPendingQuestions", () => {
       assistantWithAsk,
       { role: "user", blocks: [{ kind: "tool_result", toolUseId: "tu_1", content: "Answer questions?", isError: true }] },
     ]);
-    expect(qs).toHaveLength(1);
+    expect(qs!.questions).toHaveLength(1);
   });
 
   it("returns null once a real (non-error) answer exists", () => {

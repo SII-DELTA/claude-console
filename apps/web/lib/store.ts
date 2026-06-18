@@ -44,6 +44,12 @@ let tailSyncing = false;
 let hiddenSince = 0;
 /** coalesce visibilitychange/online/pageshow that fire together on resume */
 let lastResumeAt = 0;
+/** last time a fast `claude_driving` event set the driving flag, per session — used to
+ * stop a slightly-stale `session_updated` snapshot from reverting it (badge flicker) */
+const lastDrivingAt = new Map<string, number>();
+/** in-flight guards so resume + intervals don't fire duplicate concurrent list scans */
+let loadingSessions = false;
+let loadingAllSessions = false;
 
 /** messages fetched on each "load earlier" step */
 const HISTORY_PAGE = 40;
@@ -459,7 +465,8 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   async loadSessions() {
     const api = get().api;
-    if (!api) return;
+    if (!api || loadingSessions) return; // dedupe concurrent scans (resume + intervals)
+    loadingSessions = true;
     try {
       const res = await api.claudeSessions();
       set({ sessions: res.sessions });
@@ -470,12 +477,15 @@ export const useAppStore = create<AppState>((set, get) => ({
         return;
       }
       set({ error: describeError(err) });
+    } finally {
+      loadingSessions = false;
     }
   },
 
   async loadAllSessions() {
     const api = get().api;
-    if (!api) return;
+    if (!api || loadingAllSessions) return; // dedupe concurrent scans
+    loadingAllSessions = true;
     try {
       const res = await api.claudeAllSessions();
       set({ allSessions: res.sessions });
@@ -485,6 +495,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         return;
       }
       // overview is best-effort; don't surface a blocking error
+    } finally {
+      loadingAllSessions = false;
     }
   },
 
@@ -536,8 +548,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     // leaving the previous conversation → drop its tail cursor so the first sync on the
     // new one re-establishes a fresh byte offset (a stale cursor would re-pull a huge span).
     tailCursor = null;
-    // a pending picker/approval belongs to the session we're leaving; drop it
-    set({ selectedId: id, stream: null, pendingPermission: null, toolApproval: null });
+    // a pending picker/approval/receipt belongs to the session we're leaving; drop it
+    set({ selectedId: id, stream: null, pendingPermission: null, toolApproval: null, sendStatus: null });
     syncUrl(get().activeProjectDir, id);
     if (!id) {
       set({ messages: [], historyOffset: 0, loadingEarlier: false });
@@ -648,6 +660,9 @@ export const useAppStore = create<AppState>((set, get) => ({
           stream: s.stream ? { ...s.stream, sessionId: s.stream.sessionId ?? sessionId } : s.stream,
         }));
         markDelivered(set, get, userMsg.id, sessionId);
+        // `claude_message` events broadcast before this id was known were dropped
+        // (selectedId was null). Pull the tail now that we know the id, to backfill them.
+        void revalidateTail(api, sessionId, set, get);
       }
       return true;
     } catch (err) {
@@ -842,9 +857,19 @@ function handleServerMessage(
 ): void {
   switch (msg.type) {
     case "server:claude_session_updated": {
+      let incoming = msg.session;
+      // This full-object snapshot may have been computed just before a fresh
+      // `claude_driving` transition; don't let it revert the driving flag (badge flicker).
+      const droveAt = lastDrivingAt.get(incoming.id);
+      if (droveAt != null && Date.now() - droveAt < 2000) {
+        const cur =
+          get().sessions.find((s) => s.id === incoming.id) ??
+          get().allSessions.find((s) => s.id === incoming.id);
+        if (cur) incoming = { ...incoming, driving: cur.driving };
+      }
       set({
-        sessions: upsertSession(get().sessions, msg.session),
-        allSessions: upsertSession(get().allSessions, msg.session),
+        sessions: upsertSession(get().sessions, incoming),
+        allSessions: upsertSession(get().allSessions, incoming),
       });
       // Authoritative reconciliation: the session JSONL drives the "question"
       // attention flag (cleared once a non-error answer lands). If it's no longer
@@ -870,6 +895,7 @@ function handleServerMessage(
     case "server:claude_driving": {
       // authoritative real-time run state (hook ∪ our driver). Patch the field so the
       // dashboard "正在运行" and the chat loading indicator update without a poll.
+      lastDrivingAt.set(msg.sessionId, Date.now()); // mark fresh so a stale snapshot won't revert it
       const patchDriving = (list: ClaudeSession[]) =>
         list.map((s) => (s.id === msg.sessionId ? { ...s, driving: msg.driving } : s));
       set({ sessions: patchDriving(get().sessions), allSessions: patchDriving(get().allSessions) });
@@ -1068,7 +1094,10 @@ async function syncTail(
   try {
     const res = await api.claudeSessionTail(id, tailCursor.cursor);
     if (get().selectedId !== id) return;
-    tailCursor = { id, cursor: res.cursor };
+    // never let a late incremental response rewind the cursor below where a concurrent
+    // endTurn/revalidate already advanced it (would re-pull already-merged lines).
+    const prev = tailCursor && tailCursor.id === id ? tailCursor.cursor : 0;
+    tailCursor = { id, cursor: Math.max(res.cursor, prev) };
     if (res.messages.length) {
       let next = get().messages;
       for (const m of res.messages) next = upsertMessage(next, m);

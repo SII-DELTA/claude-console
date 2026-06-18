@@ -47,7 +47,7 @@ export function parseAskUserQuestion(input: unknown): AskQuestion[] | null {
  */
 export function findPendingQuestions(
   messages: { role: string; blocks: any[] }[],
-): AskQuestion[] | null {
+): { id: string; questions: AskQuestion[] } | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (!m || m.role !== "assistant") continue;
@@ -64,7 +64,10 @@ export function findPendingQuestions(
         ),
       );
     if (answered) return null;
-    return parseAskUserQuestion(ask.input);
+    const questions = parseAskUserQuestion(ask.input);
+    // include the tool_use id so the picker can be keyed stably (remount on a new ask,
+    // even if two consecutive asks happen to share identical question text).
+    return questions ? { id: String(ask.toolUseId ?? i), questions } : null;
   }
   return null;
 }

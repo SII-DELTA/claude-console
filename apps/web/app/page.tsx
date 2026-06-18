@@ -542,8 +542,8 @@ function Console() {
 
         {pendingQuestions && !composerLocked && (
           <QuestionPanel
-            key={`${selectedId}:${pendingQuestions.map((q) => q.question).join("|")}`}
-            questions={pendingQuestions}
+            key={`${selectedId}:${pendingQuestions.id}`}
+            questions={pendingQuestions.questions}
             onClose={() => selectedId && void dismissQuestion(selectedId)}
             closeTitle="忽略此提问"
             onSubmit={(answer) => void sendPrompt(answer, externalLive ? { force: true } : undefined)}
