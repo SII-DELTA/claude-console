@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { ClaudePermissionMode } from "@mac/shared";
-import { useAppStore, type EnterBehavior } from "../lib/store";
+import { useAppStore, getVscodeSendMode, setVscodeSendMode, type EnterBehavior, type VscodeSendMode } from "../lib/store";
 import { getInAppNotify, setInAppNotify } from "../lib/notify";
 import { disablePush, enablePush, getCachedPushStatus, getPushStatus, isIosNonStandalone, isPushSupported, type PushStatus } from "../lib/push";
 import { collectNotifyDiagnostics, diagnosticsEqual, getCachedDiagnostics, sendTestNotification, type NotifyDiagnostics } from "../lib/notify-diagnostics";
@@ -62,6 +62,8 @@ export function SettingsPage({
       <PushSection />
 
       <DiagnosticsSection />
+
+      <VscodeSection />
 
       <NetworkErrorsSection serverUrl={serverUrl} />
 
@@ -255,6 +257,49 @@ function DiagRow({ label, value, ok }: { label: string; value: string; ok?: bool
       <span className="shrink-0 text-ink-faint">{label}</span>
       <span className={`ml-auto truncate font-mono ${tone}`}>{value}</span>
     </div>
+  );
+}
+
+function VscodeSection() {
+  const ideState = useAppStore((s) => s.ideState);
+  const [mode, setMode] = useState<VscodeSendMode>("auto");
+  useEffect(() => setMode(getVscodeSendMode()), []);
+  const opts: { v: VscodeSendMode; label: string; hint: string }[] = [
+    { v: "auto", label: "自动发送", hint: "注入并回车(会切窗口)" },
+    { v: "stage", label: "暂存", hint: "只填入，你到电脑按回车" },
+  ];
+  const projCount = ideState?.projects.filter((p) => p.hasVscode).length ?? 0;
+  const pluginCount = ideState?.projects.filter((p) => p.hasPlugin).length ?? 0;
+  return (
+    <section className="mb-5">
+      <h2 className="mb-2 text-[12px] font-semibold text-ink-dim">发到 VSCode</h2>
+      <div className="space-y-3 rounded-xl border border-line bg-bg-alt p-3">
+        <div>
+          <div className="text-[13px] text-ink">发送方式</div>
+          <div className="mt-1.5 flex gap-1.5">
+            {opts.map((o) => (
+              <button
+                key={o.v}
+                onClick={() => {
+                  setVscodeSendMode(o.v);
+                  setMode(o.v);
+                }}
+                className={`flex-1 rounded-lg border px-2 py-1.5 text-[12px] transition-colors ${
+                  o.v === mode ? "border-accent bg-accent/15 text-accent" : "border-line text-ink-dim hover:bg-bg-raised"
+                }`}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+          <p className="mt-1 text-[11px] text-ink-faint">{opts.find((o) => o.v === mode)?.hint}</p>
+        </div>
+        <div className="text-[11px] text-ink-faint">
+          桌面 VSCode:{projCount} 个项目在跑{pluginCount > 0 ? `，${pluginCount} 个已装注入插件(静默/正常 tab)` : "（未检测到插件，走 URI 回退）"}。
+          会话输入框旁的 →VSCode 按钮把当前文本发到桌面对应会话。
+        </div>
+      </div>
+    </section>
   );
 }
 

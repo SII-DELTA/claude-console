@@ -63,6 +63,8 @@ function Console() {
     setDashboardFocus,
     setSessionsFocus,
     loadAllSessions,
+    ideState,
+    sendToVscode,
     selectedId,
     messages,
     historyOffset,
@@ -179,6 +181,7 @@ function Console() {
       await restoreFromUrl();
       await loadSessions();
       await loadAllSessions();
+      void useAppStore.getState().loadIdeState();
     })();
     // Slow cadence: the heavier dashboard list scans + a catch-all tail sync for the
     // open conversation (covers idle sessions). WS push is still the primary path.
@@ -186,6 +189,7 @@ function Console() {
       void loadSessions();
       void loadAllSessions();
       useAppStore.getState().syncOpenSession();
+      void useAppStore.getState().loadIdeState();
     }, 20000);
     // Fast cadence: only the open conversation, and only while it's actively running —
     // a cheap byte-cursor tail read. Idle sessions stay on the slow cadence to save
@@ -234,6 +238,8 @@ function Console() {
   // locally streaming, OR our agent is driving it (e.g. we switched away and back). Stops
   // a follow-up message from being queued onto a still-running turn.
   const sessionBusy = driveStatus === "streaming" || (!!selected?.driving && !!selected?.drivenByAgent);
+  // the selected session's project has a desktop VSCode window → offer "send to VSCode"
+  const selectedHasVscode = !!ideState?.projects.find((p) => p.cwd === selected?.cwd)?.hasVscode;
   // 方案 B: an AskUserQuestion intercepted live via the control protocol (shows
   // even while the turn is "streaming" — the turn is paused awaiting the answer).
   const bPermission =
@@ -584,6 +590,9 @@ function Console() {
           streaming={sessionBusy}
           disabled={composerLocked}
           prefill={draft}
+          onSendToVscode={
+            selectedId && selectedHasVscode ? (text) => void sendToVscode(selectedId, text) : undefined
+          }
           placeholder={
             composerLocked
               ? "运行中·先接管…"

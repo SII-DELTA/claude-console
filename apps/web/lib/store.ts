@@ -147,6 +147,32 @@ export interface Connection {
 
 export type DriveStatus = "idle" | "streaming";
 
+/** Desktop IDE detection (which projects have VSCode/plugin, per-session run state). */
+export interface IdeState {
+  projects: Array<{ cwd: string; hasVscode: boolean; hasPlugin: boolean }>;
+  sessions: Array<{ sessionId: string; cwd: string; state: string; alive: boolean; terminal: boolean }>;
+}
+
+/** "auto" = inject + press Enter (sends); "stage" = prefill only (you hit Enter at desktop). */
+export type VscodeSendMode = "auto" | "stage";
+const VSCODE_SEND_KEY = "mac.vscodeSendMode";
+export function getVscodeSendMode(): VscodeSendMode {
+  if (typeof window === "undefined") return "auto";
+  try {
+    return window.localStorage.getItem(VSCODE_SEND_KEY) === "stage" ? "stage" : "auto";
+  } catch {
+    return "auto";
+  }
+}
+export function setVscodeSendMode(m: VscodeSendMode): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(VSCODE_SEND_KEY, m);
+  } catch {
+    /* storage unavailable */
+  }
+}
+
 /** Delivery/read receipt for the just-sent user message (方案 B). */
 export type SendState = "sending" | "delivered" | "read" | "failed";
 
@@ -173,6 +199,8 @@ interface AppState {
   sessions: ClaudeSession[];
   /** sessions across ALL projects, for the dashboard overview (meta-only) */
   allSessions: ClaudeSession[];
+  /** desktop IDE state: which projects have VSCode/plugin + per-session run/terminal flags */
+  ideState: IdeState | null;
   /** dashboard project focus: null = all projects overview; else filter to this dir */
   dashboardFocus: string | null;
   /** sessions-tab project focus: null = all projects; else filter to this dir */
@@ -239,6 +267,12 @@ interface AppState {
   addProject: (cwd: string) => Promise<void>;
   /** restore project + session from the URL (?p=&s=) on first load */
   restoreFromUrl: () => Promise<void>;
+  /** refresh desktop IDE detection (VSCode/plugin per project, run state per session) */
+  loadIdeState: () => Promise<void>;
+  /** inject (and optionally send per the configured mode) text into a session's desktop CC */
+  sendToVscode: (sessionId: string, text: string) => Promise<{ ok: boolean; via: string; sent: boolean }>;
+  /** open a project folder in desktop VSCode */
+  openInVscode: (cwd: string) => Promise<void>;
   loadSessions: () => Promise<void>;
   /** refresh the cross-project overview session list */
   loadAllSessions: () => Promise<void>;
@@ -300,6 +334,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   activeProjectDir: null,
   sessions: [],
   allSessions: [],
+  ideState: null,
   dashboardFocus: null,
   sessionsFocus: null,
   selectedId: null,
@@ -494,6 +529,40 @@ export const useAppStore = create<AppState>((set, get) => ({
     // HTTP-authoritative: works even if the WS is down/zombie, so the open conversation
     // stays current without depending on push delivery.
     if (selectedId && api) void syncTail(api, selectedId, set, get);
+  },
+
+  async loadIdeState() {
+    const api = get().api;
+    if (!api) return;
+    try {
+      set({ ideState: await api.ideState() });
+    } catch {
+      /* IDE detection is best-effort (agent may be remote / non-mac) */
+    }
+  },
+
+  async sendToVscode(sessionId, text) {
+    const api = get().api;
+    if (!api) return { ok: false, via: "none", sent: false };
+    const send = getVscodeSendMode() === "auto";
+    try {
+      const r = await api.ideInject(sessionId, text, send);
+      return { ok: r.ok, via: r.via, sent: r.sent };
+    } catch (err) {
+      set({ error: describeError(err) });
+      return { ok: false, via: "none", sent: false };
+    }
+  },
+
+  async openInVscode(cwd) {
+    const api = get().api;
+    if (!api) return;
+    try {
+      await api.ideOpen(cwd);
+      setTimeout(() => void get().loadIdeState(), 1500); // refresh badges after VSCode opens
+    } catch (err) {
+      set({ error: describeError(err) });
+    }
   },
 
   async loadSessions() {

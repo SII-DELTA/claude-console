@@ -308,6 +308,26 @@ export class ApiClient {
     return this.request("POST", "/push/test");
   }
 
+  // ─────────────── Desktop IDE control ───────────────
+
+  /** Which projects have a desktop VSCode/plugin, and per-session run/terminal state. */
+  ideState(): Promise<{
+    projects: Array<{ cwd: string; hasVscode: boolean; hasPlugin: boolean }>;
+    sessions: Array<{ sessionId: string; cwd: string; state: string; alive: boolean; terminal: boolean }>;
+  }> {
+    return this.request("GET", "/ide/state", undefined, { timeoutMs: 8000 });
+  }
+
+  /** Inject (and optionally send) text into a session's running desktop Claude Code. */
+  ideInject(sessionId: string, text: string, send: boolean): Promise<{ ok: boolean; via: string; sent: boolean; detail?: string }> {
+    return this.request("POST", "/ide/inject", { sessionId, text, send }, { timeoutMs: 15_000 });
+  }
+
+  /** Open a project folder in desktop VSCode. */
+  ideOpen(cwd: string): Promise<{ ok: true }> {
+    return this.request("POST", "/ide/open", { cwd });
+  }
+
   // Claude API usage quota
   getUsage(): Promise<{
     five_hour: { utilization: number; resets_at: string } | null;

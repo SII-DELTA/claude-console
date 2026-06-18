@@ -33,6 +33,9 @@ export function ProjectsPage({ onOpenProject }: { onOpenProject: (dir: string) =
   const hideProject = useAppStore((s) => s.hideProject);
   const unhideProject = useAppStore((s) => s.unhideProject);
   const addProject = useAppStore((s) => s.addProject);
+  const ideState = useAppStore((s) => s.ideState);
+  const openInVscode = useAppStore((s) => s.openInVscode);
+  const hasVscode = (cwd: string) => !!ideState?.projects.find((p) => p.cwd === cwd)?.hasVscode;
 
   const [picking, setPicking] = useState(false);
   const [showHidden, setShowHidden] = useState(true);
@@ -55,7 +58,14 @@ export function ProjectsPage({ onOpenProject }: { onOpenProject: (dir: string) =
 
       <div className="space-y-2">
         {visible.map((p) => (
-          <ProjectCard key={p.dir} p={p} onOpen={() => onOpenProject(p.dir)} onHide={() => void hideProject(p.dir)} />
+          <ProjectCard
+            key={p.dir}
+            p={p}
+            vscode={hasVscode(p.cwd)}
+            onOpen={() => onOpenProject(p.dir)}
+            onHide={() => void hideProject(p.dir)}
+            onOpenVscode={() => void openInVscode(p.cwd)}
+          />
         ))}
         {visible.length === 0 && (
           <p className="py-8 text-center text-[13px] text-ink-faint">还没有项目，点「新增项目」选择一个目录</p>
@@ -96,7 +106,19 @@ export function ProjectsPage({ onOpenProject }: { onOpenProject: (dir: string) =
   );
 }
 
-function ProjectCard({ p, onOpen, onHide }: { p: ClaudeProject; onOpen: () => void; onHide: () => void }) {
+function ProjectCard({
+  p,
+  vscode,
+  onOpen,
+  onHide,
+  onOpenVscode,
+}: {
+  p: ClaudeProject;
+  vscode?: boolean;
+  onOpen: () => void;
+  onHide: () => void;
+  onOpenVscode: () => void;
+}) {
   return (
     <div className="flex items-center gap-3 rounded-xl border border-line bg-bg-alt p-3">
       <button onClick={onOpen} className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-bg text-ink-dim">
@@ -111,7 +133,18 @@ function ProjectCard({ p, onOpen, onHide }: { p: ClaudeProject; onOpen: () => vo
             <span className={`h-1.5 w-1.5 rounded-full ${p.liveCount > 0 ? "bg-success" : "bg-ink-faint/60"}`} />
             {p.liveCount > 0 ? "在线" : "离线"}
           </span>
+          {vscode && (
+            <span className="rounded bg-info/15 px-1.5 py-0.5 text-[10px] font-medium text-info">VSCode</span>
+          )}
         </div>
+      </button>
+      <button
+        onClick={onOpenVscode}
+        aria-label={vscode ? "VSCode 已打开" : "在 VSCode 打开"}
+        title={vscode ? "VSCode 已打开(点击聚焦)" : "在 VSCode 打开"}
+        className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg hover:bg-bg-raised ${vscode ? "text-info" : "text-ink-faint hover:text-ink"}`}
+      >
+        <svg viewBox="0 0 24 24" width="17" height="17" {...sw}><polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" /></svg>
       </button>
       <button
         onClick={onHide}
