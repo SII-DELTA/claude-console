@@ -262,8 +262,18 @@ export type ListClaudeSessionsResponse = z.infer<typeof ListClaudeSessionsRespon
 export const ClaudeSessionDetailResponseSchema = z.object({
   session: ClaudeSessionSchema,
   messages: z.array(ClaudeMessageSchema),
+  /** byte cursor at end-of-file for subsequent incremental tail reads (optional, back-compat) */
+  cursor: z.number().optional(),
 });
 export type ClaudeSessionDetailResponse = z.infer<typeof ClaudeSessionDetailResponseSchema>;
+
+/** Incremental tail: messages appended since the requested byte cursor, plus the new cursor. */
+export const ClaudeSessionTailResponseSchema = z.object({
+  session: ClaudeSessionSchema,
+  messages: z.array(ClaudeMessageSchema),
+  cursor: z.number(),
+});
+export type ClaudeSessionTailResponse = z.infer<typeof ClaudeSessionTailResponseSchema>;
 
 export const ClaudeImageSchema = z.object({
   mediaType: z.string().min(1),

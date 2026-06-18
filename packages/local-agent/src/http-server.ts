@@ -334,6 +334,21 @@ export async function buildHttpApp(opts: BuildHttpOptions): Promise<FastifyInsta
     },
   );
 
+  // Incremental tail: only the messages appended since the given byte cursor (WS-as-hint
+  // sync). O(new bytes) so the web client can poll the open conversation cheaply.
+  app.get<{ Params: { id: string }; Querystring: { cursor?: string } }>(
+    "/claude/sessions/:id/tail",
+    async (req, reply) => {
+      const cursor = req.query.cursor != null ? Number(req.query.cursor) : 0;
+      const res = await opts.claude.tail(req.params.id, Number.isFinite(cursor) ? cursor : 0);
+      if (!res) {
+        reply.code(404);
+        return { error: "not_found", code: ERROR_CODES.NOT_FOUND };
+      }
+      return res;
+    },
+  );
+
   app.post<{ Params: { id: string } }>("/claude/sessions/:id/continue", async (req, reply) => {
     const parsed = ClaudeContinueBodySchema.safeParse(req.body);
     if (!parsed.success) {

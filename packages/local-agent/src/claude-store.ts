@@ -314,6 +314,8 @@ export class ClaudeStore {
     messages: ClaudeMessage[];
     total: number;
     offset: number;
+    /** Byte cursor at end-of-file, for subsequent incremental `tail()` reads. */
+    cursor: number;
   } | null> {
     if (!SAFE_ID.test(id)) return null;
     const file = this.sessionFile(id);
@@ -328,7 +330,40 @@ export class ClaudeStore {
     const end = opts?.before != null ? Math.max(0, Math.min(opts.before, total)) : total;
     const limit = opts?.limit != null && opts.limit > 0 ? opts.limit : total;
     const start = Math.max(0, end - limit);
-    return { session, messages: all.slice(start, end), total, offset: start };
+    return { session, messages: all.slice(start, end), total, offset: start, cursor: await consumedOffset(file) };
+  }
+
+  /**
+   * Incremental tail read for the web client's HTTP-cursor sync (WS-as-hint model):
+   * given a byte cursor, return only the messages appended since, plus the new cursor
+   * and fresh session meta. O(new bytes), not O(file). Handles partial trailing lines
+   * and file truncation the same way the live file watcher does.
+   */
+  async tail(
+    id: string,
+    fromByte: number,
+  ): Promise<{ session: ClaudeSession; messages: ClaudeMessage[]; cursor: number } | null> {
+    if (!SAFE_ID.test(id)) return null;
+    const file = this.sessionFile(id);
+    if (!existsSync(file)) return null;
+    const size = (await safeSize(file)) ?? 0;
+    let from = fromByte >= 0 ? fromByte : 0;
+    if (size < from) from = 0; // file truncated/rewritten → re-read from the top
+    const messages: ClaudeMessage[] = [];
+    let cursor = from;
+    if (size > from) {
+      const chunk = await readRange(file, from, size);
+      const lastNl = chunk.lastIndexOf("\n");
+      const consumable = lastNl >= 0 ? chunk.slice(0, lastNl) : "";
+      cursor = lastNl >= 0 ? from + Buffer.byteLength(chunk.slice(0, lastNl + 1), "utf8") : from;
+      for (const line of consumable.split("\n")) {
+        const parsed = parseLine(line);
+        if (parsed?.message) messages.push(parsed.message);
+      }
+    }
+    const session = await this.readSessionMeta(file);
+    if (!session) return null;
+    return { session, messages, cursor };
   }
 
   /** Lightweight meta read (no message retention). */
@@ -521,6 +556,15 @@ async function safeSize(file: string): Promise<number | null> {
   } catch {
     return null;
   }
+}
+
+/** Byte offset just past the last complete line — the resume cursor for incremental tail reads. */
+async function consumedOffset(file: string): Promise<number> {
+  const size = (await safeSize(file)) ?? 0;
+  if (size === 0) return 0;
+  const chunk = await readRange(file, 0, size);
+  const lastNl = chunk.lastIndexOf("\n");
+  return lastNl >= 0 ? Buffer.byteLength(chunk.slice(0, lastNl + 1), "utf8") : 0;
 }
 
 async function readRange(file: string, start: number, end: number): Promise<string> {
