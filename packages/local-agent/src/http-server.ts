@@ -29,6 +29,7 @@ import type { ClaudeStore } from "./claude-store.js";
 import { ClaudeDriver, SessionLiveError } from "./claude-driver.js";
 import { readUsageCache } from "./usage-cache.js";
 import { transcribe, asrConfigured } from "./asr.js";
+import { readIdeState, injectToSession, openInVscode, cwdOfSession } from "./ide-control.js";
 import { readFile, stat, realpath } from "node:fs/promises";
 import { resolve as resolvePath, relative as relativePath, isAbsolute, extname, sep } from "node:path";
 
@@ -598,6 +599,39 @@ export async function buildHttpApp(opts: BuildHttpOptions): Promise<FastifyInsta
       reply.code(502);
       return { error: "asr_failed", message: e instanceof Error ? e.message : "asr error" };
     }
+  });
+
+  // ─────────────────── Desktop IDE control (push to VSCode/terminal session) ───────────────────
+  app.get("/ide/state", async () => {
+    return readIdeState();
+  });
+
+  app.post<{ Body: { sessionId?: string; cwd?: string; text?: string; send?: boolean } }>(
+    "/ide/inject",
+    async (req, reply) => {
+      const { sessionId, cwd, text, send } = req.body ?? {};
+      if (!sessionId || !text) {
+        reply.code(400);
+        return { error: "missing sessionId/text", code: ERROR_CODES.BAD_REQUEST };
+      }
+      // only inject into a session we actually know (cwd resolvable) — no arbitrary control
+      const resolved = cwd ?? cwdOfSession(sessionId);
+      if (!resolved) {
+        reply.code(404);
+        return { error: "unknown_session", code: ERROR_CODES.NOT_FOUND };
+      }
+      return injectToSession({ sessionId, cwd: resolved, text, send: !!send });
+    },
+  );
+
+  app.post<{ Body: { cwd?: string } }>("/ide/open", async (req, reply) => {
+    const cwd = req.body?.cwd;
+    if (!cwd) {
+      reply.code(400);
+      return { error: "missing cwd", code: ERROR_CODES.BAD_REQUEST };
+    }
+    await openInVscode(cwd);
+    return { ok: true };
   });
 
   app.get("/devices", async () => {
