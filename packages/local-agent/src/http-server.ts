@@ -29,8 +29,8 @@ import type { ClaudeStore } from "./claude-store.js";
 import { ClaudeDriver, SessionLiveError } from "./claude-driver.js";
 import { readUsageCache } from "./usage-cache.js";
 import { transcribe, asrConfigured } from "./asr.js";
-import { readFile, stat } from "node:fs/promises";
-import { resolve as resolvePath, relative as relativePath, isAbsolute, extname } from "node:path";
+import { readFile, stat, realpath } from "node:fs/promises";
+import { resolve as resolvePath, relative as relativePath, isAbsolute, extname, sep } from "node:path";
 
 export interface BuildHttpOptions {
   auth: AuthManager;
@@ -246,18 +246,33 @@ export async function buildHttpApp(opts: BuildHttpOptions): Promise<FastifyInsta
     const base = resolvePath(cwd);
     const abs = isAbsolute(cleaned) ? resolvePath(cleaned) : resolvePath(base, cleaned);
     const rel = relativePath(base, abs);
-    if (rel === ".." || rel.startsWith(`..${"/"}`) || isAbsolute(rel)) {
+    if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
       reply.code(403);
       return { error: "outside project", code: ERROR_CODES.BAD_REQUEST };
     }
     try {
-      const st = await stat(abs);
+      // Resolve symlinks and re-check containment — string math alone can't stop a
+      // symlink inside cwd from pointing outside it (arbitrary host file read).
+      let realBase: string;
+      let realAbs: string;
+      try {
+        realBase = await realpath(base);
+        realAbs = await realpath(abs);
+      } catch {
+        reply.code(404);
+        return { error: "not_found", code: ERROR_CODES.NOT_FOUND };
+      }
+      if (realAbs !== realBase && !realAbs.startsWith(realBase + sep)) {
+        reply.code(403);
+        return { error: "outside project", code: ERROR_CODES.BAD_REQUEST };
+      }
+      const st = await stat(realAbs);
       if (!st.isFile()) {
         reply.code(404);
         return { error: "not_found", code: ERROR_CODES.NOT_FOUND };
       }
       const MAX = 1_000_000;
-      const ext = extname(abs).toLowerCase();
+      const ext = extname(realAbs).toLowerCase();
       const IMG: Record<string, string> = {
         ".png": "image/png",
         ".jpg": "image/jpeg",
@@ -267,17 +282,17 @@ export async function buildHttpApp(opts: BuildHttpOptions): Promise<FastifyInsta
         ".svg": "image/svg+xml",
       };
       const BINARY = new Set([".zip", ".gz", ".tar", ".pdf", ".woff", ".woff2", ".ttf", ".ico", ".mp4", ".mov", ".mp3", ".wav", ".exe", ".bin", ".so", ".dylib", ".class", ".jar"]);
-      const relPath = rel === "" ? abs : rel;
+      const relPath = rel === "" ? realAbs : rel;
       if (ext in IMG) {
-        if (st.size > MAX) return { path: abs, relPath, kind: "binary", truncated: true, size: st.size };
-        const buf = await readFile(abs);
-        return { path: abs, relPath, kind: "image", mediaType: IMG[ext], content: buf.toString("base64"), size: st.size };
+        if (st.size > MAX) return { path: realAbs, relPath, kind: "binary", truncated: true, size: st.size };
+        const buf = await readFile(realAbs);
+        return { path: realAbs, relPath, kind: "image", mediaType: IMG[ext], content: buf.toString("base64"), size: st.size };
       }
-      if (BINARY.has(ext)) return { path: abs, relPath, kind: "binary", truncated: false, size: st.size };
-      const buf = await readFile(abs);
+      if (BINARY.has(ext)) return { path: realAbs, relPath, kind: "binary", truncated: false, size: st.size };
+      const buf = await readFile(realAbs);
       const content = buf.subarray(0, MAX).toString("utf8");
       const kind = ext === ".md" || ext === ".markdown" ? "markdown" : "text";
-      return { path: abs, relPath, kind, content, truncated: st.size > MAX, size: st.size };
+      return { path: realAbs, relPath, kind, content, truncated: st.size > MAX, size: st.size };
     } catch {
       reply.code(404);
       return { error: "not_found", code: ERROR_CODES.NOT_FOUND };

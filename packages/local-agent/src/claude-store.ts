@@ -43,7 +43,7 @@ export class ClaudeStore {
   /** mtime-keyed cache of the folded accumulator (sans messages), so list scans don't
    * re-parse hundreds of MB of unchanged JSONL on every poll (the /claude/sessions
    * timeout). Bounded; the runtime-/time-dependent fields are recomputed each call. */
-  private metaCache = new Map<string, { mtimeMs: number; acc: SessionAccumulator }>();
+  private metaCache = new Map<string, { mtimeMs: number; size: number; acc: SessionAccumulator }>();
   /** explicit active project dir override (set when the user switches project) */
   private activeDir: string | null = null;
   /** predicate injected by the runtime: is this session driven by our agent? */
@@ -132,7 +132,7 @@ export class ClaudeStore {
     if (!SAFE_ID.test(id)) return [];
     const file = this.sessionFile(id);
     if (!existsSync(file)) return [];
-    const acc = await this.foldFile(file, false);
+    const { acc } = await this.foldFile(file, false);
     return [...acc.openQuestionIds];
   }
 
@@ -248,7 +248,7 @@ export class ClaudeStore {
       const mt = await safeMtimeMs(file);
       if (!cwd) {
         // read just enough to learn the project's real cwd
-        const acc = await this.foldFile(file, false);
+        const { acc } = await this.foldFile(file, false);
         if (acc.cwd) cwd = acc.cwd;
         if (acc.messageCount > 0) sessionCount += 1;
       } else {
@@ -324,7 +324,7 @@ export class ClaudeStore {
     if (!SAFE_ID.test(id)) return null;
     const file = this.sessionFile(id);
     if (!existsSync(file)) return null;
-    const acc = await this.foldFile(file, true);
+    const { acc, consumedOffset } = await this.foldFile(file, true);
     const session = this.buildSession(id, file, acc, await safeMtimeMs(file));
     if (!session) return null;
     const all = acc.messages;
@@ -334,7 +334,7 @@ export class ClaudeStore {
     const end = opts?.before != null ? Math.max(0, Math.min(opts.before, total)) : total;
     const limit = opts?.limit != null && opts.limit > 0 ? opts.limit : total;
     const start = Math.max(0, end - limit);
-    return { session, messages: all.slice(start, end), total, offset: start, cursor: await consumedOffset(file) };
+    return { session, messages: all.slice(start, end), total, offset: start, cursor: consumedOffset };
   }
 
   /**
@@ -372,18 +372,18 @@ export class ClaudeStore {
 
   /** Lightweight meta read (no message retention). */
   private async readSessionMeta(file: string): Promise<ClaudeSession | null> {
-    const mtimeMs = await safeMtimeMs(file);
-    // Reuse the folded accumulator if the file hasn't changed since we last parsed it.
-    // foldFile (read + parse the whole JSONL) is the expensive part; buildSession below
-    // is cheap and still runs every call so isLive/driving/attention stay fresh.
+    const [mtimeMs, size] = await Promise.all([safeMtimeMs(file), safeSize(file)]);
+    // Reuse the folded accumulator if the file is byte-for-byte unchanged. Key on BOTH
+    // mtime and size: sub-millisecond appends may leave mtime unchanged, but size always
+    // moves. buildSession below still runs every call so isLive/driving/attention stay fresh.
     const cached = this.metaCache.get(file);
     let acc: SessionAccumulator;
-    if (cached && mtimeMs != null && cached.mtimeMs === mtimeMs) {
+    if (cached && mtimeMs != null && size != null && cached.mtimeMs === mtimeMs && cached.size === size) {
       acc = cached.acc;
     } else {
-      acc = await this.foldFile(file, false);
-      if (mtimeMs != null) {
-        this.metaCache.set(file, { mtimeMs, acc });
+      acc = (await this.foldFile(file, false)).acc;
+      if (mtimeMs != null && size != null) {
+        this.metaCache.set(file, { mtimeMs, size, acc });
         if (this.metaCache.size > 1000) {
           const oldest = this.metaCache.keys().next().value;
           if (oldest !== undefined) this.metaCache.delete(oldest);
@@ -393,19 +393,26 @@ export class ClaudeStore {
     return this.buildSession(basename(file, ".jsonl"), file, acc, mtimeMs);
   }
 
-  private async foldFile(file: string, keepMessages: boolean): Promise<SessionAccumulator> {
+  /** Fold the whole JSONL. Also returns the byte offset just past the last complete line
+   * (the resume cursor) computed from the same read — avoids a second full file read. */
+  private async foldFile(
+    file: string,
+    keepMessages: boolean,
+  ): Promise<{ acc: SessionAccumulator; consumedOffset: number }> {
     const acc = newAccumulator();
     let raw: string;
     try {
       raw = await fs.readFile(file, "utf8");
     } catch {
-      return acc;
+      return { acc, consumedOffset: 0 };
     }
     for (const line of raw.split("\n")) {
       const parsed = parseLine(line);
       if (parsed) accumulate(acc, parsed, keepMessages);
     }
-    return acc;
+    const lastNl = raw.lastIndexOf("\n");
+    const consumedOffset = lastNl >= 0 ? Buffer.byteLength(raw.slice(0, lastNl + 1), "utf8") : 0;
+    return { acc, consumedOffset };
   }
 
   private buildSession(
@@ -579,22 +586,20 @@ async function safeSize(file: string): Promise<number | null> {
   }
 }
 
-/** Byte offset just past the last complete line — the resume cursor for incremental tail reads. */
-async function consumedOffset(file: string): Promise<number> {
-  const size = (await safeSize(file)) ?? 0;
-  if (size === 0) return 0;
-  const chunk = await readRange(file, 0, size);
-  const lastNl = chunk.lastIndexOf("\n");
-  return lastNl >= 0 ? Buffer.byteLength(chunk.slice(0, lastNl + 1), "utf8") : 0;
-}
-
 async function readRange(file: string, start: number, end: number): Promise<string> {
   const handle = await fs.open(file, "r");
   try {
     const len = end - start;
     const buf = Buffer.alloc(len);
-    await handle.read(buf, 0, len, start);
-    return buf.toString("utf8");
+    // fs.read may return short — loop until the range is filled or EOF, and decode only
+    // the bytes actually read (a single read() leaves zero-padding → NUL bytes in JSON).
+    let off = 0;
+    while (off < len) {
+      const { bytesRead } = await handle.read(buf, off, len - off, start + off);
+      if (bytesRead === 0) break; // EOF
+      off += bytesRead;
+    }
+    return buf.subarray(0, off).toString("utf8");
   } finally {
     await handle.close();
   }
