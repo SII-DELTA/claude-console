@@ -42,6 +42,8 @@ let tailCursor: { id: string; cursor: number } | null = null;
 let tailSyncing = false;
 /** when the page was last hidden, to decide whether a returning socket is trustworthy */
 let hiddenSince = 0;
+/** coalesce visibilitychange/online/pageshow that fire together on resume */
+let lastResumeAt = 0;
 
 /** messages fetched on each "load earlier" step */
 const HISTORY_PAGE = 40;
@@ -375,8 +377,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   connectWs() {
     const conn = get().connection;
     if (!conn) return;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer); // a pending reconnect is now moot — we're connecting
+      reconnectTimer = null;
+    }
     get().ws?.close();
-    const ws = new WsClient({
+    const ws: WsClient = new WsClient({
       url: conn.wsUrl,
       token: conn.token,
       onOpen: () => {
@@ -398,11 +404,14 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
       },
       onClose: () => {
+        // Ignore the close that fires when *we* replaced this socket (connectWs already
+        // opened a fresh one) — otherwise every connect schedules a spurious reconnect
+        // that 3s later kills the healthy socket. Only the current socket dying counts.
+        if (get().ws !== ws) return;
         set({ wsConnected: false });
-        // auto-reconnect while a connection is configured (3s backoff)
         if (reconnectTimer) clearTimeout(reconnectTimer);
         reconnectTimer = setTimeout(() => {
-          if (get().connection) get().connectWs();
+          if (get().connection && !get().ws?.isOpen()) get().connectWs();
         }, 3000);
       },
       onMessage: (msg) => handleServerMessage(msg, set, get),
@@ -418,7 +427,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     const { connection, ws, selectedId, api } = get();
     if (!connection) return;
-    const hiddenMs = hiddenSince ? Date.now() - hiddenSince : 0;
+    // online/pageshow/visibilitychange often fire within the same tick on resume —
+    // collapse them so we don't reconnect + triple-fetch.
+    const nowTs = Date.now();
+    if (nowTs - lastResumeAt < 800) return;
+    lastResumeAt = nowTs;
+    const hiddenMs = hiddenSince ? nowTs - hiddenSince : 0;
     hiddenSince = 0;
     // Mobile freezes JS timers while backgrounded, so the 3s reconnect may never have
     // fired and `close` may not have surfaced. A socket that survived a long background is
@@ -519,6 +533,9 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   async selectSession(id) {
     if (prewarmTimer) clearTimeout(prewarmTimer);
+    // leaving the previous conversation → drop its tail cursor so the first sync on the
+    // new one re-establishes a fresh byte offset (a stale cursor would re-pull a huge span).
+    tailCursor = null;
     // a pending picker/approval belongs to the session we're leaving; drop it
     set({ selectedId: id, stream: null, pendingPermission: null, toolApproval: null });
     syncUrl(get().activeProjectDir, id);
@@ -955,7 +972,11 @@ function handleServerMessage(
 
 /** True if the given session is the one currently being streamed/driven. */
 function isStreamSession(st: AppState, sessionId: string): boolean {
-  return st.stream?.sessionId === sessionId || st.selectedId === sessionId;
+  if (st.stream?.sessionId === sessionId) return true;
+  // A freshly-created session hasn't adopted its id into the stream yet — match by
+  // selectedId only while a stream exists and is still id-less (never for arbitrary
+  // selected sessions, or a turn on another session would be misattributed).
+  return st.stream != null && st.stream.sessionId == null && st.selectedId === sessionId;
 }
 
 type StoreSet = (partial: Partial<AppState> | ((s: AppState) => Partial<AppState>)) => void;
