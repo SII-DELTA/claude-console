@@ -35,7 +35,7 @@ export class ApiClient {
     method: string,
     pathname: string,
     body?: unknown,
-    opts?: { timeoutMs?: number },
+    opts?: { timeoutMs?: number; silent404?: boolean },
   ): Promise<T> {
     const headers: Record<string, string> = {};
     if (this.token) headers.authorization = `Bearer ${this.token}`;
@@ -72,14 +72,18 @@ export class ApiClient {
       } catch {
         /* keep text */
       }
-      recordNetError({
-        method,
-        path: pathname,
-        status: res.status,
-        kind: "http",
-        message: res.statusText || `HTTP ${res.status}`,
-        detail: typeof text === "string" ? text.slice(0, 200) : undefined,
-      });
+      // An expected 404 (e.g. polling a just-created session whose JSONL isn't flushed
+      // yet) is handled by the caller via silent retry — don't pollute the error log.
+      if (!(res.status === 404 && opts?.silent404)) {
+        recordNetError({
+          method,
+          path: pathname,
+          status: res.status,
+          kind: "http",
+          message: res.statusText || `HTTP ${res.status}`,
+          detail: typeof text === "string" ? text.slice(0, 200) : undefined,
+        });
+      }
       throw new ApiError(`${method} ${pathname} → ${res.status}`, res.status, payload ?? text);
     }
     if (res.status === 204) return undefined as T;
@@ -162,20 +166,22 @@ export class ApiClient {
   claudeSession(
     id: string,
     opts?: { limit?: number; before?: number },
+    reqOpts?: { silent404?: boolean },
   ): Promise<{ session: ClaudeSession; messages: ClaudeMessage[]; total: number; offset: number; cursor?: number }> {
     const qs = new URLSearchParams();
     if (opts?.limit != null) qs.set("limit", String(opts.limit));
     if (opts?.before != null) qs.set("before", String(opts.before));
     const q = qs.toString();
-    return this.request("GET", `/claude/sessions/${id}${q ? `?${q}` : ""}`);
+    return this.request("GET", `/claude/sessions/${id}${q ? `?${q}` : ""}`, undefined, reqOpts);
   }
 
   /** Incremental tail: messages appended since `cursor` (a byte offset), plus the new cursor. */
   claudeSessionTail(
     id: string,
     cursor: number,
+    reqOpts?: { silent404?: boolean },
   ): Promise<{ session: ClaudeSession; messages: ClaudeMessage[]; cursor: number }> {
-    return this.request("GET", `/claude/sessions/${id}/tail?cursor=${cursor}`);
+    return this.request("GET", `/claude/sessions/${id}/tail?cursor=${cursor}`, undefined, reqOpts);
   }
 
   /** Preview a file referenced in a transcript (restricted to the session cwd subtree). */
@@ -328,4 +334,8 @@ export function isUnauthorizedError(err: unknown): boolean {
 
 export function isLiveConflict(err: unknown): boolean {
   return err instanceof ApiError && err.status === 409;
+}
+
+export function isNotFound(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 404;
 }

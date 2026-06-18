@@ -12,7 +12,7 @@ import type {
   ClaudeUsage,
   ServerMessage,
 } from "@mac/shared";
-import { ApiClient, ApiError, isLiveConflict, isUnauthorizedError } from "./api";
+import { ApiClient, ApiError, isLiveConflict, isNotFound, isUnauthorizedError } from "./api";
 import { WsClient } from "./ws";
 import { ensureNotificationPermission, notify } from "./notify";
 
@@ -68,6 +68,24 @@ function wasRecentlyCancelled(requestId: string): boolean {
 
 /** messages fetched on each "load earlier" step */
 const HISTORY_PAGE = 40;
+/**
+ * A just-created session's JSONL isn't flushed until Claude (cold-spawned over a remote
+ * link) writes its first line, so the first few polls of its detail/tail legitimately 404.
+ * Within this window we treat such a 404 as "awaiting first write": retry quietly, don't
+ * surface it or log it to the interface-error log. Past the window it's a real error again.
+ */
+const FRESH_WINDOW_MS = 15_000;
+const FRESH_RETRY_MS = 700;
+/** id → creation timestamp, for sessions newly started this session (see FRESH_WINDOW_MS). */
+const freshSessions = new Map<string, number>();
+function markFresh(id: string): void {
+  freshSessions.set(id, Date.now());
+}
+/** ms since the session was created, or null if it isn't tracked as fresh. */
+function freshAge(id: string): number | null {
+  const t = freshSessions.get(id);
+  return t == null ? null : Date.now() - t;
+}
 /** messages rendered on first opening a session (env default; overridable in Settings) */
 const INITIAL_MESSAGES_DEFAULT = Number(process.env.NEXT_PUBLIC_INITIAL_MESSAGES) || 10;
 const INITIAL_KEY = "mac.initialMessages";
@@ -687,6 +705,9 @@ export const useAppStore = create<AppState>((set, get) => ({
           stream: s.stream ? { ...s.stream, sessionId: s.stream.sessionId ?? sessionId } : s.stream,
         }));
         markDelivered(set, get, userMsg.id, sessionId);
+        // The JSONL isn't flushed yet → the immediate tail poll below (and any WS-hint
+        // polls) would 404 for a few seconds; mark it fresh so those 404s retry silently.
+        markFresh(sessionId);
         // `claude_message` events broadcast before this id was known were dropped
         // (selectedId was null). Pull the tail now that we know the id, to backfill them.
         void revalidateTail(api, sessionId, set, get);
@@ -1092,9 +1113,12 @@ async function revalidateTail(
   set: (partial: Partial<AppState> | ((s: AppState) => Partial<AppState>)) => void,
   get: () => AppState,
 ): Promise<void> {
+  const age = freshAge(id);
+  const fresh = age != null && age < FRESH_WINDOW_MS;
   try {
     const limit = Math.max(HISTORY_PAGE, get().messages.length); // preserve loaded history
-    const res = await api.claudeSession(id, { limit });
+    const res = await api.claudeSession(id, { limit }, { silent404: fresh });
+    freshSessions.delete(id); // it exists now — no longer awaiting first write
     if (get().selectedId !== id) return;
     cacheSet(id, res.messages, res.offset);
     tailCursor = { id, cursor: res.cursor ?? 0 };
@@ -1109,7 +1133,17 @@ async function revalidateTail(
     if (!res.session.driving && get().driveStatus === "streaming" && isStreamSession(get(), id)) {
       set({ driveStatus: "idle", stream: null, sendStatus: null });
     }
-  } catch {
+  } catch (err) {
+    // A just-created session's JSONL isn't flushed yet → 404. Retry quietly within the
+    // fresh window instead of surfacing or logging the error (the 404 was already kept
+    // out of the interface-error log via silent404).
+    if (fresh && isNotFound(err) && get().selectedId === id) {
+      setTimeout(() => {
+        if (get().selectedId === id) void revalidateTail(api, id, set, get);
+      }, FRESH_RETRY_MS);
+      return;
+    }
+    if (!fresh) freshSessions.delete(id); // window elapsed without success → stop tracking
     /* keep the cached view if revalidation fails */
   }
 }
