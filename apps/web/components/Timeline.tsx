@@ -7,6 +7,12 @@ import { ImageThumb } from "./ImageThumb";
 import { copyText } from "../lib/clipboard";
 import { useAppStore, type SendState } from "../lib/store";
 
+/** Claude CLI injects a synthetic text block like
+ * "[Image: original 1206x2622, displayed at 920x2000. Multiply coordinates by 1.31 …]"
+ * next to an attached image (for the model's coordinate mapping). The desktop UI hides
+ * it; we drop it too so it doesn't show as a stray line under the user's image. */
+const IMAGE_DIMENSION_NOTE = /^\[Image[^\]]*\b(?:displayed at \d+x\d+|Multiply coordinates)\b[^\]]*\]$/i;
+
 /**
  * Claude-Code-style conversation timeline. Tool calls are paired with their
  * results (by tool_use_id) and collapsed by default into a single tidy row;
@@ -334,7 +340,11 @@ export function buildTimeline(messages: ClaudeMessage[]): Item[] {
   for (const m of messages) {
     if (m.role === "user") {
       const texts = m.blocks.filter((b): b is Extract<ClaudeMessageBlock, { kind: "text" }> => b.kind === "text");
-      const text = texts.map((t) => t.text).join("\n").trim();
+      const text = texts
+        .map((t) => t.text)
+        .filter((t) => !IMAGE_DIMENSION_NOTE.test(t.trim())) // Claude CLI's synthetic image-size note (desktop hides it)
+        .join("\n")
+        .trim();
       const images = m.blocks
         .filter((b): b is Extract<ClaudeMessageBlock, { kind: "image" }> => b.kind === "image")
         .map((b) => `data:${b.mediaType};base64,${b.dataBase64}`);
