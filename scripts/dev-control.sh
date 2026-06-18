@@ -70,7 +70,8 @@ start_web() {
 start_web_dev() {
   echo "[dev-control] starting web (dev / next dev) on :$WEB_PORT"
   rm -rf "$ROOT_DIR/apps/web/.next-dev"
-  run_detached "$WEB_LABEL" "$WEB_SCREEN" "$ROOT_DIR/apps/web" "$LOG_DIR/web.log" "env NEXT_DIST_DIR=.next-dev NEXT_PUBLIC_AGENT_HTTPS_PORT=$AGENT_HTTPS_PORT NEXT_PUBLIC_INITIAL_MESSAGES=$INITIAL_MESSAGES ./node_modules/.bin/next dev -p $WEB_PORT"
+  kill_by_port "$WEB_PORT" # close the race: free the port right before binding
+  run_detached "$WEB_LABEL" "$WEB_SCREEN" "$ROOT_DIR/apps/web" "$LOG_DIR/web.log" "env NEXT_DIST_DIR=.next-dev NEXT_PUBLIC_AGENT_HTTPS_PORT=$AGENT_HTTPS_PORT NEXT_PUBLIC_INITIAL_MESSAGES=$INITIAL_MESSAGES ./node_modules/.bin/next dev -H 127.0.0.1 -p $WEB_PORT"
   wait_for_http "http://127.0.0.1:$WEB_PORT/" "web" "$LOG_DIR/web.log"
 }
 
@@ -85,7 +86,13 @@ start_web_prod() {
     env NEXT_DIST_DIR=.next NEXT_PUBLIC_AGENT_HTTPS_PORT="$AGENT_HTTPS_PORT" NEXT_PUBLIC_INITIAL_MESSAGES="$INITIAL_MESSAGES" ./node_modules/.bin/next build 2>&1 | tee "$LOG_DIR/web-build.log"
   )
   echo "[dev-control] starting web (prod / next start) on :$WEB_PORT"
-  run_detached "$WEB_LABEL" "$WEB_SCREEN" "$ROOT_DIR/apps/web" "$LOG_DIR/web.log" "env NEXT_DIST_DIR=.next ./node_modules/.bin/next start -p $WEB_PORT"
+  # The build above takes 30-60s; anything could have grabbed the port since stop_web.
+  # Re-free it right before binding so restart is reliable (closes the EADDRINUSE race).
+  kill_by_port "$WEB_PORT"
+  # Bind 127.0.0.1 explicitly: on Node 25 + Next 14.2, the default wildcard bind (`::`)
+  # spuriously fails with EADDRINUSE even on a free port. Web is fronted by tailscale
+  # serve → localhost is the right bind anyway (matches the agent).
+  run_detached "$WEB_LABEL" "$WEB_SCREEN" "$ROOT_DIR/apps/web" "$LOG_DIR/web.log" "env NEXT_DIST_DIR=.next ./node_modules/.bin/next start -H 127.0.0.1 -p $WEB_PORT"
   wait_for_http "http://127.0.0.1:$WEB_PORT/" "web" "$LOG_DIR/web.log"
 }
 
@@ -106,7 +113,9 @@ stop_web() {
   screen_quit "$WEB_SCREEN"
   launchctl_remove "$WEB_LABEL"
   kill_by_port "$WEB_PORT"
-  kill_by_pattern "agent_console/apps/web/.*/next/dist/bin/next (dev|start) -p $WEB_PORT"
+  # next's bin resolves under the root node_modules/.pnpm, not apps/web — match on the
+  # `next (dev|start) -p <port>` tail (and the cwd-bound launcher) instead.
+  kill_by_pattern "next (dev|start) -p $WEB_PORT"
   kill_by_pattern "pnpm --filter @mac/web dev"
 }
 
