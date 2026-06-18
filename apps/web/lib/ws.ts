@@ -10,9 +10,10 @@ export interface WsClientOptions {
 }
 
 /** App-level heartbeat: how often we ping the server. A dead socket is detected
- * within ~2× this (no pong by the next tick → terminate → reconnect). Kept below
- * the server's own 30s ping so we notice a silent drop first. */
-const PING_INTERVAL_MS = 20_000;
+ * within ~2× this (no pong by the next tick → terminate → reconnect). Kept well below
+ * the server's own 30s ping so the client always notices a silent drop first and
+ * reconnects, rather than being terminated server-side and going unaware. */
+const PING_INTERVAL_MS = 12_000;
 
 export class WsClient {
   private socket: WebSocket | null = null;

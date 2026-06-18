@@ -36,6 +36,12 @@ function loadPermissionMode(): ClaudePermissionMode {
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 /** debounce so we only pre-warm a session you actually dwell on */
 let prewarmTimer: ReturnType<typeof setTimeout> | null = null;
+/** byte cursor for the open conversation's incremental tail sync (WS-as-hint model) */
+let tailCursor: { id: string; cursor: number } | null = null;
+/** guard against overlapping incremental syncs for the open conversation */
+let tailSyncing = false;
+/** when the page was last hidden, to decide whether a returning socket is trustworthy */
+let hiddenSince = 0;
 
 /** messages fetched on each "load earlier" step */
 const HISTORY_PAGE = 40;
@@ -170,6 +176,8 @@ interface AppState {
   sendStatus: { sessionId: string | null; messageId: string; state: SendState } | null;
   error: string | null;
 
+  /** Incrementally sync the open conversation's tail (cheap; safe to call on a poll). */
+  syncOpenSession: () => void;
   setConnection: (c: Connection | null) => void;
   setMobileTab: (t: MobileTab) => void;
   setPermissionMode: (m: ClaudePermissionMode) => void;
@@ -404,21 +412,35 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   handleVisible() {
-    if (typeof document !== "undefined" && document.hidden) return;
+    if (typeof document !== "undefined" && document.hidden) {
+      hiddenSince = Date.now(); // remember when we went background, to judge staleness on return
+      return;
+    }
     const { connection, ws, selectedId, api } = get();
     if (!connection) return;
-    // Mobile freezes JS timers while backgrounded, so the 3s reconnect may never
-    // have fired and `close` may not have surfaced. On returning to the foreground,
-    // reconnect immediately if the socket isn't open; otherwise just resync the tail.
-    if (!ws || !ws.isOpen()) {
+    const hiddenMs = hiddenSince ? Date.now() - hiddenSince : 0;
+    hiddenSince = 0;
+    // Mobile freezes JS timers while backgrounded, so the 3s reconnect may never have
+    // fired and `close` may not have surfaced. A socket that survived a long background is
+    // likely a zombie — the server may have already terminated us on its 30s heartbeat.
+    // Don't trust readyState past a short grace window: force a fresh reconnect.
+    const STALE_AFTER_MS = 15_000;
+    if (!ws || !ws.isOpen() || hiddenMs > STALE_AFTER_MS) {
       if (reconnectTimer) clearTimeout(reconnectTimer);
-      get().connectWs(); // onOpen refetches the lists
+      get().connectWs(); // onOpen refetches the lists + tail
     } else {
-      // socket alive but timers were frozen — refresh the dashboard lists + tail
+      // socket trusted alive — refresh the dashboard lists + incrementally sync the tail
       void get().loadSessions();
       void get().loadAllSessions();
-      if (selectedId && api) void revalidateTail(api, selectedId, set, get);
+      if (selectedId && api) void syncTail(api, selectedId, set, get);
     }
+  },
+
+  syncOpenSession() {
+    const { selectedId, api } = get();
+    // HTTP-authoritative: works even if the WS is down/zombie, so the open conversation
+    // stays current without depending on push delivery.
+    if (selectedId && api) void syncTail(api, selectedId, set, get);
   },
 
   async loadSessions() {
@@ -529,6 +551,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       // guard against a race where the user switched away mid-fetch
       if (get().selectedId === id) {
         cacheSet(id, res.messages, res.offset);
+        tailCursor = { id, cursor: res.cursor ?? 0 };
         set({
           messages: res.messages,
           historyOffset: res.offset,
@@ -819,6 +842,12 @@ function handleServerMessage(
       if (a && a.sessionId === msg.session.id && msg.session.attention !== "approval") {
         set({ toolApproval: null });
       }
+      // WS-as-hint: a change on the open conversation → pull its new tail (incremental,
+      // dedupes vs any delta/message already applied). Catches anything WS push dropped.
+      if (msg.session.id === get().selectedId) {
+        const api = get().api;
+        if (api) void syncTail(api, msg.session.id, set, get);
+      }
       break;
     }
     case "server:claude_driving": {
@@ -961,6 +990,7 @@ async function endTurn(
     const res = await api.claudeSession(sessionId, { limit: HISTORY_PAGE });
     if (get().selectedId === sessionId) {
       cacheSet(sessionId, res.messages, res.offset);
+      tailCursor = { id: sessionId, cursor: res.cursor ?? 0 };
       set({
         messages: res.messages,
         historyOffset: res.offset,
@@ -983,6 +1013,7 @@ async function revalidateTail(
     const res = await api.claudeSession(id, { limit: HISTORY_PAGE });
     if (get().selectedId !== id) return;
     cacheSet(id, res.messages, res.offset);
+    tailCursor = { id, cursor: res.cursor ?? 0 };
     set({
       messages: res.messages,
       historyOffset: res.offset,
@@ -990,6 +1021,49 @@ async function revalidateTail(
     });
   } catch {
     /* keep the cached view if revalidation fails */
+  }
+}
+
+/**
+ * Incremental tail sync for the open conversation (WS-as-hint model): pulls only the
+ * bytes appended since our cursor, so it's cheap enough to run on every poll / hint and
+ * doesn't depend on the WS staying alive. Falls back to a full revalidate when we have
+ * no cursor yet. Upserts (dedupes vs WS-delivered messages) and keeps any loaded-earlier
+ * history intact. Also refreshes the authoritative session (driving/isLive) so the
+ * loading indicator self-heals, and finalizes a stuck local "streaming" turn.
+ */
+async function syncTail(
+  api: ApiClient,
+  id: string,
+  set: (partial: Partial<AppState> | ((s: AppState) => Partial<AppState>)) => void,
+  get: () => AppState,
+): Promise<void> {
+  if (tailSyncing) return;
+  if (!tailCursor || tailCursor.id !== id) {
+    void revalidateTail(api, id, set, get); // establishes the cursor
+    return;
+  }
+  tailSyncing = true;
+  try {
+    const res = await api.claudeSessionTail(id, tailCursor.cursor);
+    if (get().selectedId !== id) return;
+    tailCursor = { id, cursor: res.cursor };
+    if (res.messages.length) {
+      let next = get().messages;
+      for (const m of res.messages) next = upsertMessage(next, m);
+      cacheSet(id, next, get().historyOffset);
+      set({ messages: next });
+    }
+    set({ sessions: upsertSession(get().sessions, res.session) });
+    // authoritative driving says the turn ended but our local stream is still "streaming"
+    // (we missed drive_done) → finalize so the composer unlocks and the badge clears.
+    if (!res.session.driving && get().driveStatus === "streaming" && isStreamSession(get(), id)) {
+      void endTurn(set, get, id);
+    }
+  } catch {
+    /* keep the current view if the incremental sync fails */
+  } finally {
+    tailSyncing = false;
   }
 }
 

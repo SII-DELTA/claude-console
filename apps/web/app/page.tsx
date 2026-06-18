@@ -157,7 +157,15 @@ function Console() {
   useEffect(() => {
     const onVisible = () => useAppStore.getState().handleVisible();
     document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
+    // network came back / page restored from bfcache → treat like a foreground resume
+    // (reconnect a zombie socket, resync the tail) instead of waiting for a heartbeat.
+    window.addEventListener("online", onVisible);
+    window.addEventListener("pageshow", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("online", onVisible);
+      window.removeEventListener("pageshow", onVisible);
+    };
   }, []);
 
   // clicking a push notification asks the SW to open that session
@@ -174,6 +182,9 @@ function Console() {
     const t = setInterval(() => {
       void loadSessions();
       void loadAllSessions();
+      // also incrementally sync the open conversation (cheap byte-cursor tail) so new
+      // messages appear without depending on WS push or a manual refresh.
+      useAppStore.getState().syncOpenSession();
     }, 20000);
     return () => clearInterval(t);
   }, [loadProjects, restoreFromUrl, loadSessions, loadAllSessions]);

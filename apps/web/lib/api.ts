@@ -147,12 +147,20 @@ export class ApiClient {
   claudeSession(
     id: string,
     opts?: { limit?: number; before?: number },
-  ): Promise<{ session: ClaudeSession; messages: ClaudeMessage[]; total: number; offset: number }> {
+  ): Promise<{ session: ClaudeSession; messages: ClaudeMessage[]; total: number; offset: number; cursor?: number }> {
     const qs = new URLSearchParams();
     if (opts?.limit != null) qs.set("limit", String(opts.limit));
     if (opts?.before != null) qs.set("before", String(opts.before));
     const q = qs.toString();
     return this.request("GET", `/claude/sessions/${id}${q ? `?${q}` : ""}`);
+  }
+
+  /** Incremental tail: messages appended since `cursor` (a byte offset), plus the new cursor. */
+  claudeSessionTail(
+    id: string,
+    cursor: number,
+  ): Promise<{ session: ClaudeSession; messages: ClaudeMessage[]; cursor: number }> {
+    return this.request("GET", `/claude/sessions/${id}/tail?cursor=${cursor}`);
   }
 
   /** Start a brand new Claude session. Returns the generated session id. */
