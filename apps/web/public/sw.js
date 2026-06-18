@@ -22,9 +22,15 @@ self.addEventListener("push", (event) => {
       // If a visible window is already viewing this session, the in-app UI already
       // shows it — don't double-notify.
       const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-      const viewing = wins.some(
-        (c) => c.visibilityState === "visible" && sessionId && c.url.includes("s=" + sessionId),
-      );
+      const viewing = wins.some((c) => {
+        if (c.visibilityState !== "visible" || !sessionId) return false;
+        try {
+          // exact query match — `includes("s="+id)` would let "s=abc" match "s=abcd".
+          return new URL(c.url).searchParams.get("s") === sessionId;
+        } catch {
+          return false;
+        }
+      });
       if (viewing) return;
       await self.registration.showNotification(title, {
         body,

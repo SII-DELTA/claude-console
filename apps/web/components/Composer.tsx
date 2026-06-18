@@ -60,6 +60,9 @@ export function Composer({
   const [voiceHint, setVoiceHint] = useState(false);
   const [voiceMode, setVoiceModeState] = useState(loadVoiceMode);
   const recorderRef = useRef<PcmRecorder | null>(null);
+  // guard async transcription callbacks from setting state after unmount (switch session/tab)
+  const mounted = useRef(true);
+  useEffect(() => () => void (mounted.current = false), []);
 
   // Auto-grow the textarea with its content (WeChat-style); CSS max-height caps it then scrolls.
   useEffect(() => {
@@ -131,13 +134,14 @@ export function Composer({
     try {
       const b64 = await recorderRef.current.stop();
       const { text: t } = await api!.asr(b64);
+      if (!mounted.current) return; // bailed out of this composer mid-transcribe
       if (t) setText((prev) => (prev.trim() ? `${prev} ${t}` : t));
       else setError("未识别到语音，请重试");
     } catch (e) {
       // surface the failure so it isn't silently swallowed; backend sends a readable message
-      setError(`语音转写失败：${describeError(e)}`);
+      if (mounted.current) setError(`语音转写失败：${describeError(e)}`);
     } finally {
-      setTranscribing(false);
+      if (mounted.current) setTranscribing(false);
       recorderRef.current = null;
     }
   }

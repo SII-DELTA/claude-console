@@ -50,6 +50,21 @@ const lastDrivingAt = new Map<string, number>();
 /** in-flight guards so resume + intervals don't fire duplicate concurrent list scans */
 let loadingSessions = false;
 let loadingAllSessions = false;
+/** requestIds cancelled recently — so a stale pending-permission snapshot (from a
+ * reconnect-era refresh) can't revive an already-answered/cancelled question */
+const recentlyCancelled = new Map<string, number>();
+/** when we last raised a picker — so a slightly-stale session_updated snapshot can't
+ * immediately clear a just-shown one via its (older) attention flag */
+let pickerSetAt = 0;
+function noteCancelled(requestId: string): void {
+  const now = Date.now();
+  recentlyCancelled.set(requestId, now);
+  for (const [k, ts] of recentlyCancelled) if (now - ts > 10_000) recentlyCancelled.delete(k);
+}
+function wasRecentlyCancelled(requestId: string): boolean {
+  const ts = recentlyCancelled.get(requestId);
+  return ts != null && Date.now() - ts < 8000;
+}
 
 /** messages fetched on each "load earlier" step */
 const HISTORY_PAGE = 40;
@@ -794,7 +809,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       // ignore if the user switched away while the request was in flight
       if (get().selectedId !== sessionId) return;
       const first = res.pending[0];
-      if (first) {
+      if (first && !wasRecentlyCancelled(first.requestId)) {
+        pickerSetAt = Date.now();
         set({
           pendingPermission: {
             sessionId,
@@ -804,7 +820,7 @@ export const useAppStore = create<AppState>((set, get) => ({
             live: first.live,
           },
         });
-      } else if (get().pendingPermission?.sessionId === sessionId) {
+      } else if (!first && get().pendingPermission?.sessionId === sessionId) {
         // server says nothing pending → clear any stale local picker
         set({ pendingPermission: null });
       }
@@ -875,13 +891,15 @@ function handleServerMessage(
       // attention flag (cleared once a non-error answer lands). If it's no longer
       // a question, drop any lingering picker we may hold — covers a missed
       // permission_cancel (brief disconnect) or an answer made on another client.
+      // ...but don't let a snapshot that predates a just-raised picker clear it (flicker).
+      const fresh = Date.now() - pickerSetAt < 1500;
       const p = get().pendingPermission;
-      if (p && p.sessionId === msg.session.id && msg.session.attention !== "question") {
+      if (!fresh && p && p.sessionId === msg.session.id && msg.session.attention !== "question") {
         set({ pendingPermission: null });
       }
       // same reconciliation for tool approvals (attention drops to non-"approval")
       const a = get().toolApproval;
-      if (a && a.sessionId === msg.session.id && msg.session.attention !== "approval") {
+      if (!fresh && a && a.sessionId === msg.session.id && msg.session.attention !== "approval") {
         set({ toolApproval: null });
       }
       // WS-as-hint: a change on the open conversation → pull its new tail (incremental,
@@ -957,6 +975,7 @@ function handleServerMessage(
       // session still needs the user (the bell badge alone is easy to miss).
       notify("❓ Claude 需要你选择", get().sessions.find((s) => s.id === msg.sessionId)?.title);
       if (msg.sessionId === get().selectedId) {
+        pickerSetAt = Date.now(); // protect this fresh picker from a stale session_updated clear
         set({
           pendingPermission: {
             sessionId: msg.sessionId,
@@ -972,6 +991,7 @@ function handleServerMessage(
     case "server:claude_tool_approval_request": {
       notify("🔐 Claude 请求执行工具", get().sessions.find((s) => s.id === msg.sessionId)?.title);
       if (msg.sessionId === get().selectedId) {
+        pickerSetAt = Date.now();
         set({
           toolApproval: {
             sessionId: msg.sessionId,
@@ -985,6 +1005,7 @@ function handleServerMessage(
       break;
     }
     case "server:claude_permission_cancel": {
+      noteCancelled(msg.requestId); // so a late refresh can't revive this exact request
       const p = get().pendingPermission;
       if (p && p.requestId === msg.requestId) set({ pendingPermission: null });
       const a = get().toolApproval;

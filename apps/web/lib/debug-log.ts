@@ -24,15 +24,19 @@ let entries: DebugEntry[] = [];
 let seq = 0;
 let installed = false;
 const listeners = new Set<() => void>();
+/** Recording gate: patches are permanent (can't be un-monkeypatched), but when the
+ * console is toggled off we stop recording so memory/overhead doesn't keep accruing. */
+let capturing = false;
 
 function emit() {
   for (const l of listeners) l();
 }
 
 function push(kind: DebugKind, text: string, net?: DebugEntry["net"]) {
+  if (!capturing) return;
   seq += 1;
   entries.push({ id: seq, ts: Date.now(), kind, text, net });
-  if (entries.length > MAX) entries = entries.slice(entries.length - MAX);
+  if (entries.length > MAX) entries.shift(); // bounded ring; no per-push array realloc
   emit();
 }
 
@@ -68,6 +72,7 @@ export function setDebugConsole(on: boolean): void {
   } catch {
     /* storage unavailable */
   }
+  capturing = on; // stop/resume recording immediately (patches stay installed)
   window.dispatchEvent(new CustomEvent(DEBUG_EVENT, { detail: on }));
 }
 
@@ -91,6 +96,7 @@ function stringifyArg(a: unknown): string {
 
 /** Idempotently patch console / errors / fetch. Originals are preserved and still run. */
 export function installDebugCapture(): void {
+  capturing = true; // mounting the panel means the console is on → record
   if (installed || typeof window === "undefined") return;
   installed = true;
 
