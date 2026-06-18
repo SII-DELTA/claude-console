@@ -94,6 +94,9 @@ export function QuestionPanel({
 }) {
   // selected[qIndex] = set of chosen labels
   const [selected, setSelected] = useState<Record<number, string[]>>({});
+  // one-question-at-a-time: which question's card is showing, and whether collapsed.
+  const [active, setActive] = useState(0);
+  const [collapsed, setCollapsed] = useState(false);
   // when the card first appears, pull it into view and flash a highlight —
   // an in-page stand-in for a system popup (which http can't deliver).
   const ref = useRef<HTMLDivElement>(null);
@@ -104,17 +107,28 @@ export function QuestionPanel({
     return () => clearTimeout(t);
   }, []);
 
-  function toggle(qi: number, label: string, multi: boolean) {
+  const isAnswered = (qi: number) => (selected[qi]?.length ?? 0) > 0;
+  const answeredCount = questions.reduce((n, _, qi) => n + (isAnswered(qi) ? 1 : 0), 0);
+  const multi = questions.length > 1;
+
+  function choose(qi: number, label: string, isMulti: boolean) {
     setSelected((prev) => {
       const cur = prev[qi] ?? [];
-      if (multi) {
+      if (isMulti) {
         return { ...prev, [qi]: cur.includes(label) ? cur.filter((l) => l !== label) : [...cur, label] };
       }
       return { ...prev, [qi]: cur[0] === label ? [] : [label] };
     });
+    // single-select: advance to the next unanswered question (desktop-like flow).
+    if (!isMulti) {
+      const nextUnanswered = questions.findIndex((_, i) => i > qi && !isAnswered(i));
+      if (nextUnanswered >= 0) setActive(nextUnanswered);
+    }
   }
 
-  const anySelected = questions.some((_, qi) => (selected[qi]?.length ?? 0) > 0);
+  const anySelected = answeredCount > 0;
+  const cur = questions[Math.min(active, questions.length - 1)];
+  const curIdx = Math.min(active, questions.length - 1);
 
   function submit() {
     const parts = questions.map((q, qi) => {
@@ -134,74 +148,135 @@ export function QuestionPanel({
   return (
     <div
       ref={ref}
-      className={`relative mx-auto mb-2 max-w-3xl rounded-2xl border bg-bg-alt p-3 transition-shadow duration-700 ${
+      className={`mx-auto mb-2 max-w-3xl rounded-2xl border bg-bg-alt p-3 transition-shadow duration-700 ${
         flash ? "border-accent shadow-[0_0_0_3px_rgba(217,119,87,0.35)]" : "border-accent/30"
       }`}
     >
-      {onClose && (
+      {/* Header row: tabs / summary take the flexible space; collapse + close are
+          dedicated slots so they can never overlap the title text. */}
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          {collapsed ? (
+            <div className="flex h-6 items-center gap-2 text-[12px] text-ink-dim">
+              <span className="rounded-full bg-accent/20 px-2 py-0.5 text-[11px] font-medium text-accent">待你选择</span>
+              <span className="truncate">
+                {questions.length} 个问题 · {answeredCount}/{questions.length} 已答
+              </span>
+            </div>
+          ) : multi ? (
+            <div className="flex gap-1 overflow-x-auto pb-0.5 scroll-thin">
+              {questions.map((q, qi) => (
+                <button
+                  key={qi}
+                  onClick={() => setActive(qi)}
+                  className={`flex shrink-0 max-w-[8.5rem] items-center gap-1 rounded-full border px-2.5 py-1 text-[12px] transition ${
+                    qi === curIdx
+                      ? "border-accent bg-accent/15 text-accent"
+                      : "border-line text-ink-dim hover:border-accent/50"
+                  }`}
+                >
+                  {isAnswered(qi) && <span className="text-[10px] text-accent">✓</span>}
+                  <span className="truncate">{q.header || `问题${qi + 1}`}</span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <span className="rounded-full bg-accent/20 px-2 py-0.5 text-[11px] font-medium text-accent">待你选择</span>
+          )}
+        </div>
         <button
-          onClick={onClose}
-          disabled={disabled}
-          title={closeTitle ?? "关闭（不回答）"}
-          aria-label={closeTitle ?? "关闭（不回答）"}
-          className="absolute right-2 top-2 grid h-6 w-6 place-items-center rounded-full text-ink-faint transition-colors hover:bg-bg-raised hover:text-ink"
+          onClick={() => setCollapsed((c) => !c)}
+          title={collapsed ? "展开" : "折叠（先看上面的内容）"}
+          aria-label={collapsed ? "展开" : "折叠"}
+          className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-ink-faint transition-colors hover:bg-bg-raised hover:text-ink"
         >
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
-            <line x1="6" y1="6" x2="18" y2="18" />
-            <line x1="18" y1="6" x2="6" y2="18" />
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true" className={collapsed ? "" : "rotate-180"}>
+            <polyline points="6 9 12 15 18 9" />
           </svg>
         </button>
-      )}
-      {questions.map((q, qi) => (
-        <div key={qi} className={qi > 0 ? "mt-4" : ""}>
-          <div className="mb-2 flex items-center gap-2">
-            {q.header && (
-              <span className="rounded-full bg-accent/20 px-2 py-0.5 text-[11px] font-medium text-accent">
-                {q.header}
+        {onClose && (
+          <button
+            onClick={onClose}
+            disabled={disabled}
+            title={closeTitle ?? "关闭（不回答）"}
+            aria-label={closeTitle ?? "关闭（不回答）"}
+            className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-ink-faint transition-colors hover:bg-bg-raised hover:text-ink"
+          >
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
+              <line x1="6" y1="6" x2="18" y2="18" />
+              <line x1="18" y1="6" x2="6" y2="18" />
+            </svg>
+          </button>
+        )}
+      </div>
+
+      {!collapsed && cur && (
+        <>
+          <div className="mb-2 mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+            {cur.header && (
+              <span className="shrink-0 rounded-full bg-accent/20 px-2 py-0.5 text-[11px] font-medium text-accent">
+                {cur.header}
               </span>
             )}
-            <span className="text-sm font-medium text-ink">{q.question}</span>
-            {q.multiSelect && <span className="text-[11px] text-ink-faint">（可多选）</span>}
+            <span className="min-w-0 break-words text-sm font-medium text-ink">{cur.question}</span>
+            {cur.multiSelect && <span className="shrink-0 text-[11px] text-ink-faint">（可多选）</span>}
           </div>
           <div className="flex flex-col gap-1.5">
-            {q.options.map((o) => {
-              const on = (selected[qi] ?? []).includes(o.label);
+            {cur.options.map((o) => {
+              const on = (selected[curIdx] ?? []).includes(o.label);
               return (
                 <button
                   key={o.label}
                   disabled={disabled}
-                  onClick={() => toggle(qi, o.label, !!q.multiSelect)}
+                  onClick={() => choose(curIdx, o.label, !!cur.multiSelect)}
                   className={`rounded-xl border px-3 py-2 text-left transition ${
-                    on
-                      ? "border-accent bg-accent/15"
-                      : "border-line bg-bg-raised hover:border-accent/50"
+                    on ? "border-accent bg-accent/15" : "border-line bg-bg-raised hover:border-accent/50"
                   }`}
                 >
                   <div className="flex items-center gap-2">
                     <span
                       className={`grid h-4 w-4 shrink-0 place-items-center border text-[10px] ${
-                        q.multiSelect ? "rounded" : "rounded-full"
+                        cur.multiSelect ? "rounded" : "rounded-full"
                       } ${on ? "border-accent bg-accent text-bg" : "border-ink-faint"}`}
                     >
                       {on ? "✓" : ""}
                     </span>
-                    <span className="text-sm font-medium text-ink">{o.label}</span>
+                    <span className="min-w-0 break-words text-sm font-medium text-ink">{o.label}</span>
                   </div>
                   {o.description && (
-                    <p className="mt-1 pl-6 text-[12px] leading-snug text-ink-dim">{o.description}</p>
+                    <p className="mt-1 pl-6 text-[12px] leading-snug text-ink-dim break-words">{o.description}</p>
                   )}
                 </button>
               );
             })}
           </div>
-        </div>
-      ))}
-      <div className="mt-3 flex items-center justify-between">
-        <span className="text-[11px] text-ink-faint">也可在下方输入框自由回复</span>
-        <button onClick={submit} disabled={disabled || !anySelected} className="btn !py-1.5 text-sm">
-          提交选择
-        </button>
-      </div>
+          <div className="mt-3 flex items-center gap-2">
+            {multi && (
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setActive((a) => Math.max(0, a - 1))}
+                  disabled={curIdx === 0}
+                  className="rounded-lg border border-line px-2 py-1 text-[12px] text-ink-dim hover:bg-bg-raised disabled:opacity-30"
+                >
+                  上一题
+                </button>
+                <button
+                  onClick={() => setActive((a) => Math.min(questions.length - 1, a + 1))}
+                  disabled={curIdx === questions.length - 1}
+                  className="rounded-lg border border-line px-2 py-1 text-[12px] text-ink-dim hover:bg-bg-raised disabled:opacity-30"
+                >
+                  下一题
+                </button>
+                <span className="ml-1 text-[11px] text-ink-faint">{answeredCount}/{questions.length} 已答</span>
+              </div>
+            )}
+            <button onClick={submit} disabled={disabled || !anySelected} className="btn !py-1.5 ml-auto text-sm">
+              提交选择
+            </button>
+          </div>
+          <p className="mt-1.5 text-[11px] text-ink-faint">也可在下方输入框自由回复</p>
+        </>
+      )}
     </div>
   );
 }
