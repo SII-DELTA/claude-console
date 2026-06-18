@@ -54,7 +54,7 @@ const FREE_PATHS = new Set([
   "/auth/pair",
   "/auth/pair/issue",
   "/auth/login",
-  "/usage",
+  // /usage requires auth — it leaks quota data and is only shown post-login.
   "/push/vapid-public-key",
 ]);
 
@@ -577,6 +577,12 @@ export async function buildHttpApp(opts: BuildHttpOptions): Promise<FastifyInsta
     if (!body?.audioBase64 || typeof body.audioBase64 !== "string") {
       reply.code(400);
       return { error: "bad_request", code: ERROR_CODES.BAD_REQUEST };
+    }
+    // Cap audio size: the upstream ASR is short-utterance (~60s) and billed. ~2MB base64
+    // (~1.5MB raw) is plenty; reject larger to avoid quota/cost abuse.
+    if (body.audioBase64.length > 2_000_000) {
+      reply.code(413);
+      return { error: "audio_too_large", code: ERROR_CODES.BAD_REQUEST };
     }
     if (!asrConfigured()) {
       reply.code(503);

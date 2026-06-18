@@ -64,6 +64,10 @@ export class PushManager {
     const last = this.lastSent.get(key);
     if (last != null && now - last < THROTTLE_MS) return;
     this.lastSent.set(key, now);
+    // Prune expired throttle keys so the map doesn't grow unbounded with session count.
+    if (this.lastSent.size > 256) {
+      for (const [k, ts] of this.lastSent) if (now - ts >= THROTTLE_MS) this.lastSent.delete(k);
+    }
 
     const subs = this.store.listPushSubscriptions();
     if (subs.length === 0) return;

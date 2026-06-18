@@ -140,13 +140,27 @@ export async function startAgent(config: AgentRuntimeConfig): Promise<AgentRunti
   // Set MAC_AGENT_PASSWORD to enforce password login (required before exposing
   // beyond loopback, e.g. over Tailscale).
   const noAuth = !password;
+  // Loud guard: exposing beyond loopback with no password = open shell/RCE on the LAN.
+  const loopback = host === "127.0.0.1" || host === "::1" || host === "localhost";
+  if (noAuth && !loopback) {
+    console.warn(
+      `\n⚠️  [local-agent] 绑定到 ${host} 但未设置 MAC_AGENT_PASSWORD —— 任何能访问 ${host}:${port} 的人都可创建/控制会话(等同 RCE)。\n    请设置 MAC_AGENT_PASSWORD,或仅绑定 127.0.0.1(由 tailscale serve 前置)。\n`,
+    );
+  }
 
   // Web Push: agent pushes "needs answer / done / error" to subscribed browsers so
   // notifications arrive even when the PWA is backgrounded/closed. Title cache is fed
   // by session updates so we don't re-parse a transcript on every turn event.
   const push = new PushManager(store, { storagePath: config.storagePath });
   const titleOf = new Map<string, string>();
-  bus.on("claude:session_updated", (s) => titleOf.set(s.id, s.title));
+  bus.on("claude:session_updated", (s) => {
+    titleOf.set(s.id, s.title);
+    if (titleOf.size > 2000) {
+      const oldest = titleOf.keys().next().value; // bound the cache; evict oldest-inserted
+      if (oldest !== undefined) titleOf.delete(oldest);
+    }
+  });
+  bus.on("session:deleted", (id) => titleOf.delete(id));
   const pushNotify = (sessionId: string, kind: "question" | "error" | "done", body: string) =>
     void push.notify({ sessionId, title: titleOf.get(sessionId) ?? "Claude 会话", body, kind });
   bus.on("claude:permission_request", (sessionId) => pushNotify(sessionId, "question", "需要你回答"));
