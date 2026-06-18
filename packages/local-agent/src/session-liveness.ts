@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import chokidar, { type FSWatcher } from "chokidar";
@@ -15,7 +15,11 @@ export interface SessionLiveInfo {
   lastEventAt: string | null;
 }
 
-const REAP_INTERVAL_MS = 45_000;
+const REAP_INTERVAL_MS = 20_000;
+/** A `busy` state with no active tool and no new hook event for this long is treated
+ * as a missed-`Stop` residue and downgraded to idle. Generous so genuine long
+ * tool runs (which keep `currentTool` set) and long generations are never misjudged. */
+const BUSY_STALE_MS = 10 * 60_000;
 
 /**
  * Tracks per-session run state written by the Claude lifecycle hooks
@@ -49,6 +53,7 @@ export class SessionLiveness {
       /* ignore */
     }
     this.loadAll();
+    this.reap(); // clear crash residue from a previous run immediately, not after one interval
     this.watcher = chokidar.watch(this.dir, { ignoreInitial: true, depth: 0 });
     this.watcher.on("add", (f) => this.onWrite(f));
     this.watcher.on("change", (f) => this.onWrite(f));
@@ -153,15 +158,38 @@ export class SessionLiveness {
     } catch {
       return; // registry unreadable → skip this round rather than wrongly reaping
     }
+    const now = Date.now();
     for (const [sid, rec] of this.states) {
       if (rec.state === "ended" || rec.state === "dead") continue;
       // also accept our own recorded pid as alive (covers agent-spawned procs)
       const ownPidAlive = rec.pid != null && this.pidAlive(rec.pid);
       if (!liveSids.has(sid) && !ownPidAlive) {
+        // owning process is gone but Stop/SessionEnd never fired → dead residue
         const wasBusy = rec.state === "busy";
         this.states.set(sid, { ...rec, state: "dead" });
         if (wasBusy) this.bus?.emit("claude:driving", sid, false);
+        this.removeStateFile(sid); // don't let dead files accumulate on disk
+        continue;
       }
+      // 4b: process alive but stuck `busy` with no active tool and no new event for
+      // a long time → a missed `Stop`. Downgrade to idle so it stops showing "running".
+      if (
+        rec.state === "busy" &&
+        rec.currentTool == null &&
+        rec.lastEventAt != null &&
+        now - Date.parse(rec.lastEventAt) > BUSY_STALE_MS
+      ) {
+        this.states.set(sid, { ...rec, state: "idle" });
+        this.bus?.emit("claude:driving", sid, false);
+      }
+    }
+  }
+
+  private removeStateFile(sid: string): void {
+    try {
+      unlinkSync(join(this.dir, `${sid}.json`));
+    } catch {
+      /* already gone */
     }
   }
 

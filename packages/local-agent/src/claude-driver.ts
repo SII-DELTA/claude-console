@@ -319,6 +319,7 @@ export class ClaudeDriver {
     for (const ev of parseStreamLine(line)) {
       switch (ev.kind) {
         case "delta":
+          this.touch(sessionId); // streaming activity → keep the idle reaper from firing mid-turn
           this.opts.bus.emit("claude:delta", {
             sessionId,
             delta: ev.text,
@@ -692,9 +693,23 @@ export class ClaudeDriver {
     const w = this.procs.get(sessionId);
     if (!w) return;
     if (w.idle) clearTimeout(w.idle);
-    w.idle = setTimeout(() => this.kill(sessionId), this.idleMs);
+    w.idle = setTimeout(() => this.reapIfIdle(sessionId), this.idleMs);
     // don't keep the event loop alive just for the reaper
     w.idle.unref?.();
+  }
+
+  /** Idle-timer callback: never kill a process mid-turn. A busy session is in an
+   * active turn (a long tool run / long generation produces no stdout to touch on),
+   * so re-arm instead of reaping — the reaper only frees genuinely idle processes.
+   * (`kill()` itself stays unconditional, for interrupt / shutdown / mode-switch.) */
+  private reapIfIdle(sessionId: string): void {
+    const w = this.procs.get(sessionId);
+    if (!w) return;
+    if (w.busy) {
+      this.touch(sessionId); // active turn → defer reaping
+      return;
+    }
+    this.kill(sessionId);
   }
 
   private kill(sessionId: string): void {
