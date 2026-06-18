@@ -1119,7 +1119,11 @@ async function syncTail(
     // endTurn/revalidate already advanced it (would re-pull already-merged lines).
     const prev = tailCursor && tailCursor.id === id ? tailCursor.cursor : 0;
     tailCursor = { id, cursor: Math.max(res.cursor, prev) };
-    if (res.messages.length) {
+    // While this session is streaming, the live bubble + optimistic user message are on
+    // screen; merging the JSONL's real user message (different id) would show a DUPLICATE
+    // bubble until endTurn refetches. Skip the merge — endTurn reconciles authoritatively.
+    const streamingThis = get().driveStatus === "streaming" && isStreamSession(get(), id);
+    if (res.messages.length && !streamingThis) {
       let next = get().messages;
       for (const m of res.messages) next = upsertMessage(next, m);
       cacheSet(id, next, get().historyOffset);

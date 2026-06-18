@@ -57,6 +57,9 @@ export type BusEvents = {
   "claude:permission_cancel": (sessionId: string, requestId: string) => void;
   /** Authoritative "a turn started/stopped" signal (driver busy transition). */
   "claude:driving": (sessionId: string, driving: boolean) => void;
+  /** our warm process for this session just exited — re-check its hook liveness now
+   * instead of waiting for the periodic reaper (clears stale "externally live"). */
+  "claude:process_gone": (sessionId: string) => void;
   "device:pair_request": (info: { deviceName: string; platform: string; pairCode: string }) => void;
   "device:paired": (deviceId: string) => void;
 };

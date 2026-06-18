@@ -185,6 +185,21 @@ export class SessionLiveness {
     }
   }
 
+  /** On-demand reap of a single session (e.g. our driver's process just exited): if the
+   * hook state lingers but its owning pid is dead, mark it dead now instead of waiting for
+   * the periodic reaper. Re-reads from disk first so a terminal that legitimately re-opened
+   * the session (fresh live pid) is left alone. */
+  reapOne(sessionId: string): void {
+    this.read(join(this.dir, `${sessionId}.json`)); // refresh from disk
+    const rec = this.states.get(sessionId);
+    if (!rec || rec.state === "dead" || rec.state === "ended") return;
+    if (rec.pid != null && this.pidAlive(rec.pid)) return; // a live process owns it now
+    const wasBusy = rec.state === "busy";
+    this.states.set(sessionId, { ...rec, state: "dead" });
+    if (wasBusy) this.bus?.emit("claude:driving", sessionId, false);
+    this.removeStateFile(sessionId);
+  }
+
   private removeStateFile(sid: string): void {
     try {
       unlinkSync(join(this.dir, `${sid}.json`));

@@ -280,6 +280,7 @@ export class ClaudeDriver {
       this.clearPending(sessionId);
       this.procs.delete(sessionId);
       this.opts.bus.emit("claude:drive_error", sessionId, err.message, now());
+      this.opts.bus.emit("claude:process_gone", sessionId);
     });
     proc.on("close", (code) => {
       const wasBusy = w.busy;
@@ -290,6 +291,9 @@ export class ClaudeDriver {
         const msg = w.stderr.trim() || `claude exited with code ${code}`;
         this.opts.bus.emit("claude:drive_error", sessionId, msg, now());
       }
+      // our process is gone — drop any stale hook liveness so the session doesn't look
+      // "externally live" (false takeover prompt) until the periodic reaper notices.
+      this.opts.bus.emit("claude:process_gone", sessionId);
     });
   }
 

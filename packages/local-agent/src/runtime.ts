@@ -98,6 +98,9 @@ export async function startAgent(config: AgentRuntimeConfig): Promise<AgentRunti
       (id) => liveness.isBusy(id),
       (id) => liveness.isAlive(id),
     );
+    // when our warm process exits, immediately drop its stale hook liveness so the
+    // session stops looking "externally live" (the phone's own session ≠ takeover).
+    bus.on("claude:process_gone", (id) => liveness.reapOne(id));
     // install the lifecycle hooks into the user-level settings (idempotent, best-effort)
     void installLivenessHooks().then(
       (r) => {
