@@ -40,6 +40,10 @@ export class ClaudeStore {
   private watcher: FSWatcher | null = null;
   /** byte offset already consumed per file path */
   private offsets = new Map<string, number>();
+  /** mtime-keyed cache of the folded accumulator (sans messages), so list scans don't
+   * re-parse hundreds of MB of unchanged JSONL on every poll (the /claude/sessions
+   * timeout). Bounded; the runtime-/time-dependent fields are recomputed each call. */
+  private metaCache = new Map<string, { mtimeMs: number; acc: SessionAccumulator }>();
   /** explicit active project dir override (set when the user switches project) */
   private activeDir: string | null = null;
   /** predicate injected by the runtime: is this session driven by our agent? */
@@ -368,8 +372,25 @@ export class ClaudeStore {
 
   /** Lightweight meta read (no message retention). */
   private async readSessionMeta(file: string): Promise<ClaudeSession | null> {
-    const acc = await this.foldFile(file, false);
-    return this.buildSession(basename(file, ".jsonl"), file, acc, await safeMtimeMs(file));
+    const mtimeMs = await safeMtimeMs(file);
+    // Reuse the folded accumulator if the file hasn't changed since we last parsed it.
+    // foldFile (read + parse the whole JSONL) is the expensive part; buildSession below
+    // is cheap and still runs every call so isLive/driving/attention stay fresh.
+    const cached = this.metaCache.get(file);
+    let acc: SessionAccumulator;
+    if (cached && mtimeMs != null && cached.mtimeMs === mtimeMs) {
+      acc = cached.acc;
+    } else {
+      acc = await this.foldFile(file, false);
+      if (mtimeMs != null) {
+        this.metaCache.set(file, { mtimeMs, acc });
+        if (this.metaCache.size > 1000) {
+          const oldest = this.metaCache.keys().next().value;
+          if (oldest !== undefined) this.metaCache.delete(oldest);
+        }
+      }
+    }
+    return this.buildSession(basename(file, ".jsonl"), file, acc, mtimeMs);
   }
 
   private async foldFile(file: string, keepMessages: boolean): Promise<SessionAccumulator> {

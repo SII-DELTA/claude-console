@@ -136,12 +136,14 @@ export class ApiClient {
   // ─────────────── Claude Code sessions ───────────────
 
   claudeSessions(): Promise<{ sessions: ClaudeSession[] }> {
-    return this.request("GET", "/claude/sessions");
+    // Folding many large JSONLs can take a few seconds on a cold cache (after an agent
+    // restart); the backend mtime-caches so steady-state is fast. Allow headroom.
+    return this.request("GET", "/claude/sessions", undefined, { timeoutMs: 30_000 });
   }
 
   /** Sessions across all projects (dashboard overview). */
   claudeAllSessions(): Promise<{ sessions: ClaudeSession[] }> {
-    return this.request("GET", "/claude/sessions/all");
+    return this.request("GET", "/claude/sessions/all", undefined, { timeoutMs: 30_000 });
   }
 
   claudeSession(
