@@ -163,6 +163,23 @@ export class ApiClient {
     return this.request("GET", `/claude/sessions/${id}/tail?cursor=${cursor}`);
   }
 
+  /** Preview a file referenced in a transcript (restricted to the session cwd subtree). */
+  previewFile(
+    cwd: string,
+    path: string,
+  ): Promise<{
+    path: string;
+    relPath: string;
+    kind: "text" | "markdown" | "image" | "binary";
+    content?: string;
+    mediaType?: string;
+    truncated?: boolean;
+    size: number;
+  }> {
+    const qs = new URLSearchParams({ cwd, path });
+    return this.request("GET", `/files/preview?${qs.toString()}`);
+  }
+
   /** Start a brand new Claude session. Returns the generated session id. */
   newClaudeSession(
     prompt: string,

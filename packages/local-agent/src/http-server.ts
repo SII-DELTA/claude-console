@@ -29,6 +29,8 @@ import type { ClaudeStore } from "./claude-store.js";
 import { ClaudeDriver, SessionLiveError } from "./claude-driver.js";
 import { readUsageCache } from "./usage-cache.js";
 import { transcribe, asrConfigured } from "./asr.js";
+import { readFile, stat } from "node:fs/promises";
+import { resolve as resolvePath, relative as relativePath, isAbsolute, extname } from "node:path";
 
 export interface BuildHttpOptions {
   auth: AuthManager;
@@ -230,6 +232,56 @@ export async function buildHttpApp(opts: BuildHttpOptions): Promise<FastifyInsta
   app.get<{ Params: { id: string } }>("/sessions/:id/files", async (req) => {
     const files = opts.store.listFileChanges(req.params.id);
     return { files };
+  });
+
+  // Preview a file referenced in a chat transcript. Security: the resolved path MUST
+  // stay within the session's cwd subtree (no traversal, no arbitrary host reads).
+  app.get<{ Querystring: { cwd?: string; path?: string } }>("/files/preview", async (req, reply) => {
+    const { cwd, path: rawPath } = req.query;
+    if (!cwd || !rawPath) {
+      reply.code(400);
+      return { error: "missing cwd/path", code: ERROR_CODES.BAD_REQUEST };
+    }
+    const cleaned = rawPath.replace(/:\d+(?::\d+)?$/, ""); // drop a :line[:col] suffix
+    const base = resolvePath(cwd);
+    const abs = isAbsolute(cleaned) ? resolvePath(cleaned) : resolvePath(base, cleaned);
+    const rel = relativePath(base, abs);
+    if (rel === ".." || rel.startsWith(`..${"/"}`) || isAbsolute(rel)) {
+      reply.code(403);
+      return { error: "outside project", code: ERROR_CODES.BAD_REQUEST };
+    }
+    try {
+      const st = await stat(abs);
+      if (!st.isFile()) {
+        reply.code(404);
+        return { error: "not_found", code: ERROR_CODES.NOT_FOUND };
+      }
+      const MAX = 1_000_000;
+      const ext = extname(abs).toLowerCase();
+      const IMG: Record<string, string> = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+        ".svg": "image/svg+xml",
+      };
+      const BINARY = new Set([".zip", ".gz", ".tar", ".pdf", ".woff", ".woff2", ".ttf", ".ico", ".mp4", ".mov", ".mp3", ".wav", ".exe", ".bin", ".so", ".dylib", ".class", ".jar"]);
+      const relPath = rel === "" ? abs : rel;
+      if (ext in IMG) {
+        if (st.size > MAX) return { path: abs, relPath, kind: "binary", truncated: true, size: st.size };
+        const buf = await readFile(abs);
+        return { path: abs, relPath, kind: "image", mediaType: IMG[ext], content: buf.toString("base64"), size: st.size };
+      }
+      if (BINARY.has(ext)) return { path: abs, relPath, kind: "binary", truncated: false, size: st.size };
+      const buf = await readFile(abs);
+      const content = buf.subarray(0, MAX).toString("utf8");
+      const kind = ext === ".md" || ext === ".markdown" ? "markdown" : "text";
+      return { path: abs, relPath, kind, content, truncated: st.size > MAX, size: st.size };
+    } catch {
+      reply.code(404);
+      return { error: "not_found", code: ERROR_CODES.NOT_FOUND };
+    }
   });
 
   // ─────────────────── Claude Code native sessions ───────────────────

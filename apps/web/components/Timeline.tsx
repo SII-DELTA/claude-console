@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import type { ClaudeMessage, ClaudeMessageBlock } from "@mac/shared";
-import { Markdown } from "./Markdown";
+import { Markdown, OpenFileContext } from "./Markdown";
 import { ImageThumb } from "./ImageThumb";
 import { copyText } from "../lib/clipboard";
 import { useAppStore, type SendState } from "../lib/store";
@@ -28,14 +28,18 @@ type Item =
 export function Timeline({
   messages,
   onFillInput,
+  onOpenFile,
 }: {
   messages: ClaudeMessage[];
   /** Drop a message's text into the composer (does NOT send). */
   onFillInput?: (text: string) => void;
+  /** Open a file referenced in the transcript (path-looking inline code → preview). */
+  onOpenFile?: (path: string) => void;
 }) {
   const groups = groupItems(buildTimeline(messages));
   const sendStatus = useAppStore((s) => s.sendStatus);
   return (
+    <OpenFileContext.Provider value={onOpenFile ?? null}>
     <div className="space-y-3">
       {groups.map((g, i) =>
         g.kind === "user" ? (
@@ -48,6 +52,7 @@ export function Timeline({
         ),
       )}
     </div>
+    </OpenFileContext.Provider>
   );
 }
 

@@ -23,6 +23,7 @@ import { onPushOpenSession } from "../lib/push";
 import { useEdgeSwipeBack } from "../lib/useEdgeSwipeBack";
 import { DebugConsolePanel } from "../components/DebugConsolePanel";
 import { getDebugConsole, subscribeDebugConsole } from "../lib/debug-log";
+import { FilePreview } from "../components/FilePreview";
 
 export default function Page() {
   const hydrated = useHydrated();
@@ -293,6 +294,9 @@ function Console() {
     return subscribeDebugConsole(setDebugConsoleOn);
   }, []);
 
+  // a file path clicked in the transcript → preview overlay (resolved against session cwd)
+  const [previewFile, setPreviewFile] = useState<string | null>(null);
+
   return (
     <div className="flex h-screen overflow-hidden bg-bg text-ink flex-col md:flex-row">
       {/* Sidebar (desktop) / Drawer (mobile) */}
@@ -446,6 +450,7 @@ function Console() {
               <Timeline
                 messages={messages}
                 onFillInput={(t) => setDraft((d) => ({ text: t, nonce: d.nonce + 1 }))}
+                onOpenFile={(p) => setPreviewFile(p)}
               />
               {stream && (
                 <div className="mt-3">
@@ -590,6 +595,9 @@ function Console() {
         />
       )}
       {debugConsole && <DebugConsolePanel />}
+      {previewFile && selected?.cwd && (
+        <FilePreview cwd={selected.cwd} path={previewFile} onClose={() => setPreviewFile(null)} />
+      )}
     </div>
   );
 }
