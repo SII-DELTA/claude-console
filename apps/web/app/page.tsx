@@ -180,14 +180,25 @@ function Console() {
       await loadSessions();
       await loadAllSessions();
     })();
-    const t = setInterval(() => {
+    // Slow cadence: the heavier dashboard list scans + a catch-all tail sync for the
+    // open conversation (covers idle sessions). WS push is still the primary path.
+    const slow = setInterval(() => {
       void loadSessions();
       void loadAllSessions();
-      // also incrementally sync the open conversation (cheap byte-cursor tail) so new
-      // messages appear without depending on WS push or a manual refresh.
       useAppStore.getState().syncOpenSession();
     }, 20000);
-    return () => clearInterval(t);
+    // Fast cadence: only the open conversation, and only while it's actively running —
+    // a cheap byte-cursor tail read. Idle sessions stay on the slow cadence to save
+    // battery / backend load. The syncTail in-flight guard dedupes overlaps with `slow`.
+    const fast = setInterval(() => {
+      const s = useAppStore.getState();
+      const sel = s.sessions.find((x) => x.id === s.selectedId);
+      if (sel && (sel.driving || sel.isLive)) s.syncOpenSession();
+    }, 4000);
+    return () => {
+      clearInterval(slow);
+      clearInterval(fast);
+    };
   }, [loadProjects, restoreFromUrl, loadSessions, loadAllSessions]);
 
   // Jump to the latest when switching sessions; otherwise follow new content
