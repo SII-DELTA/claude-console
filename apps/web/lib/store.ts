@@ -560,11 +560,23 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   async selectSession(id) {
     if (prewarmTimer) clearTimeout(prewarmTimer);
-    // leaving the previous conversation → drop its tail cursor so the first sync on the
-    // new one re-establishes a fresh byte offset (a stale cursor would re-pull a huge span).
-    tailCursor = null;
-    // a pending picker/approval/receipt belongs to the session we're leaving; drop it
-    set({ selectedId: id, stream: null, pendingPermission: null, toolApproval: null, sendStatus: null });
+    const switching = id !== get().selectedId;
+    if (switching) {
+      // The streaming UI / pickers / cursor all belong to the session we're leaving. Reset
+      // them — crucially driveStatus, else it stays "streaming" (the left turn's drive_done
+      // no longer matches isStreamSession) and the new session's composer is hidden forever.
+      tailCursor = null;
+      set({
+        selectedId: id,
+        stream: null,
+        driveStatus: "idle",
+        pendingPermission: null,
+        toolApproval: null,
+        sendStatus: null,
+      });
+    } else {
+      set({ selectedId: id }); // re-selecting the same session — don't disturb an active stream
+    }
     syncUrl(get().activeProjectDir, id);
     if (!id) {
       set({ messages: [], historyOffset: 0, loadingEarlier: false });
@@ -1055,7 +1067,10 @@ async function endTurn(
   const api = get().api;
   if (!api || get().selectedId !== sessionId) return;
   try {
-    const res = await api.claudeSession(sessionId, { limit: HISTORY_PAGE });
+    // fetch at least as many as are currently loaded, so a turn-end doesn't snap the view
+    // back to the last page when the user had scrolled earlier history into view.
+    const limit = Math.max(HISTORY_PAGE, get().messages.length);
+    const res = await api.claudeSession(sessionId, { limit });
     if (get().selectedId === sessionId) {
       cacheSet(sessionId, res.messages, res.offset);
       tailCursor = { id: sessionId, cursor: res.cursor ?? 0 };
@@ -1078,7 +1093,8 @@ async function revalidateTail(
   get: () => AppState,
 ): Promise<void> {
   try {
-    const res = await api.claudeSession(id, { limit: HISTORY_PAGE });
+    const limit = Math.max(HISTORY_PAGE, get().messages.length); // preserve loaded history
+    const res = await api.claudeSession(id, { limit });
     if (get().selectedId !== id) return;
     cacheSet(id, res.messages, res.offset);
     tailCursor = { id, cursor: res.cursor ?? 0 };
@@ -1087,6 +1103,12 @@ async function revalidateTail(
       historyOffset: res.offset,
       sessions: upsertSession(get().sessions, res.session),
     });
+    // If we reconnected/returned to a turn that finished while we were away, the local
+    // "streaming" state is stuck (drive_done was missed) → the composer stays hidden and
+    // a stale partial bubble lingers. The authoritative session isn't driving → finalize.
+    if (!res.session.driving && get().driveStatus === "streaming" && isStreamSession(get(), id)) {
+      set({ driveStatus: "idle", stream: null, sendStatus: null });
+    }
   } catch {
     /* keep the cached view if revalidation fails */
   }

@@ -230,6 +230,10 @@ function Console() {
   // require an explicit takeover.
   const externalLive = !!selected?.isLive && !selected?.drivenByAgent && driveStatus !== "streaming";
   const composerLocked = externalLive && !takeoverArmed;
+  // Show interrupt (not an input) whenever the open session is actively running a turn —
+  // locally streaming, OR our agent is driving it (e.g. we switched away and back). Stops
+  // a follow-up message from being queued onto a still-running turn.
+  const sessionBusy = driveStatus === "streaming" || (!!selected?.driving && !!selected?.drivenByAgent);
   // 方案 B: an AskUserQuestion intercepted live via the control protocol (shows
   // even while the turn is "streaming" — the turn is paused awaiting the answer).
   const bPermission =
@@ -565,7 +569,7 @@ function Console() {
           </div>
         )}
 
-        {driveStatus !== "streaming" && (
+        {!sessionBusy && (
           <div className="mx-auto flex max-w-3xl items-center gap-2 px-3 pt-1.5 md:px-8">
             <div className="min-w-0 flex-1">
               {selectedId && <QuickActions onPick={(p) => handleSend(p)} disabled={composerLocked} />}
@@ -577,7 +581,7 @@ function Console() {
         <Composer
           onSend={handleSend}
           onInterrupt={() => void interrupt()}
-          streaming={driveStatus === "streaming"}
+          streaming={sessionBusy}
           disabled={composerLocked}
           prefill={draft}
           placeholder={
