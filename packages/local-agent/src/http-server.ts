@@ -631,6 +631,16 @@ export async function buildHttpApp(opts: BuildHttpOptions): Promise<FastifyInsta
     return { enabled: true, publicKey: opts.push.publicKey };
   });
 
+  // End-to-end push test: actually send via the push service to every stored subscription
+  // and report per-endpoint results (the in-app diagnostics only test local Notification).
+  app.post("/push/test", async (req, reply) => {
+    if (!opts.push) {
+      reply.code(503);
+      return { error: "push_disabled", code: ERROR_CODES.INTERNAL };
+    }
+    return opts.push.sendTest();
+  });
+
   app.post("/push/subscribe", async (req, reply) => {
     if (!opts.push) {
       reply.code(503);

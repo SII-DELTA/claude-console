@@ -37,7 +37,11 @@ export class PushManager {
   ) {
     this.keys = loadOrCreateVapid(opts.storagePath);
     if (opts.now) this.nowFn = opts.now;
-    webpush.setVapidDetails(opts.subject ?? "mailto:claude-console@localhost", this.keys.publicKey, this.keys.privateKey);
+    // Apple Web Push REJECTS a VAPID `sub` with an invalid domain (e.g. `@localhost`) with
+    // 403 → no notifications ever arrive. Use a syntactically valid contact; overridable
+    // via MAC_AGENT_PUSH_SUBJECT (must be a real `mailto:`/`https:`).
+    const subject = opts.subject ?? process.env.MAC_AGENT_PUSH_SUBJECT ?? "mailto:claude-console@nexra.app";
+    webpush.setVapidDetails(subject, this.keys.publicKey, this.keys.privateKey);
   }
 
   /** Public VAPID key the browser needs to create a subscription. */
@@ -55,6 +59,27 @@ export class PushManager {
 
   hasSubscriptions(): boolean {
     return this.store.listPushSubscriptions().length > 0;
+  }
+
+  /** Send a test push to every subscription and report per-endpoint results — the
+   * end-to-end backend→push-service leg the in-app diagnostics can't reach. Bypasses
+   * the throttle. Prunes 404/410 (gone) subscriptions like notify() does. */
+  async sendTest(): Promise<{ total: number; sent: number; results: Array<{ endpoint: string; ok: boolean; status?: number; error?: string }> }> {
+    const subs = this.store.listPushSubscriptions();
+    const body = JSON.stringify({ sessionId: "__test__", title: "🔔 测试推送", body: "后端→设备 推送链路正常", kind: "done" });
+    const results = await Promise.all(
+      subs.map(async (s) => {
+        try {
+          await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, body);
+          return { endpoint: s.endpoint.slice(0, 60), ok: true };
+        } catch (err) {
+          const status = (err as { statusCode?: number }).statusCode;
+          if (status === 404 || status === 410) this.store.deletePushSubscription(s.endpoint);
+          return { endpoint: s.endpoint.slice(0, 60), ok: false, status, error: (err as Error).message };
+        }
+      }),
+    );
+    return { total: subs.length, sent: results.filter((r) => r.ok).length, results };
   }
 
   /** Push to all subscriptions. De-duped per session+kind within THROTTLE_MS. */

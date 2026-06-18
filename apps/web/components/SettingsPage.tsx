@@ -306,6 +306,27 @@ function DiagnosticsSection() {
     }
   }
 
+  async function testPush() {
+    if (!api) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await api.pushTest();
+      const failed = r.results.filter((x) => !x.ok);
+      setMsg(
+        r.total === 0
+          ? "后端没有任何推送订阅 —— 先「重新订阅推送」"
+          : failed.length === 0
+            ? `服务器已推送到 ${r.sent}/${r.total} 个设备（应已收到）`
+            : `推送失败：${r.sent}/${r.total} 成功，失败状态码 ${failed.map((x) => x.status ?? "?").join("/")}`,
+      );
+    } catch (e) {
+      setMsg(`后端推送测试失败：${String((e as Error)?.message ?? e)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const btn = "rounded-lg border border-line px-2.5 py-1.5 text-[12px] text-ink-dim hover:bg-bg-raised disabled:opacity-40";
 
   return (
@@ -345,6 +366,9 @@ function DiagnosticsSection() {
           </button>
           <button onClick={() => void test()} disabled={busy} className={btn}>
             发送测试通知
+          </button>
+          <button onClick={() => void testPush()} disabled={busy || !api} className={btn}>
+            测试服务器推送
           </button>
         </div>
         {msg && <p className="mt-2 text-[11px] text-ink-dim">{msg}</p>}

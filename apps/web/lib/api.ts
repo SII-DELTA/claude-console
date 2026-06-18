@@ -283,6 +283,12 @@ export class ApiClient {
     return this.request("POST", "/push/unsubscribe", { endpoint });
   }
 
+  /** End-to-end push test: server actually sends to every subscription. Reveals delivery
+   * failures (e.g. a rejected VAPID subject) the local Notification test can't see. */
+  pushTest(): Promise<{ total: number; sent: number; results: Array<{ endpoint: string; ok: boolean; status?: number }> }> {
+    return this.request("POST", "/push/test");
+  }
+
   // Claude API usage quota
   getUsage(): Promise<{
     five_hour: { utilization: number; resets_at: string } | null;
