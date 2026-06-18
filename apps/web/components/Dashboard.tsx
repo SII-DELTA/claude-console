@@ -269,14 +269,16 @@ export function Dashboard({
 
   // swipe the body left/right to move focus across [全部, ...projects]
   const order: (string | null)[] = [null, ...projects.map((p) => p.dir)];
-  const swipeStart = { x: 0, y: 0 };
+  // a ref, not a per-render object: a re-render between touchstart and touchend (frequent
+  // while sessions stream) must not reset the start point and trigger a false project switch.
+  const swipeStart = useRef({ x: 0, y: 0 });
   function onSwipeStart(e: React.TouchEvent) {
-    swipeStart.x = e.touches[0]!.clientX;
-    swipeStart.y = e.touches[0]!.clientY;
+    swipeStart.current.x = e.touches[0]!.clientX;
+    swipeStart.current.y = e.touches[0]!.clientY;
   }
   function onSwipeEnd(e: React.TouchEvent) {
-    const dx = e.changedTouches[0]!.clientX - swipeStart.x;
-    const dy = e.changedTouches[0]!.clientY - swipeStart.y;
+    const dx = e.changedTouches[0]!.clientX - swipeStart.current.x;
+    const dy = e.changedTouches[0]!.clientY - swipeStart.current.y;
     if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
     const i = order.indexOf(focus);
     const next = dx < 0 ? i + 1 : i - 1;

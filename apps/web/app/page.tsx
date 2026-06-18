@@ -514,6 +514,7 @@ function Console() {
               </p>
             )}
             <QuestionPanel
+              key={bPermission.requestId}
               questions={bPermission.questions}
               onClose={() => void closePermission()}
               closeTitle={bPermission.live === false ? "忽略此提问" : "取消（不回答，让 Claude 继续）"}
@@ -530,6 +531,7 @@ function Console() {
 
         {bApproval && !bPermission && (
           <ToolApprovalPanel
+            key={bApproval.requestId}
             toolName={bApproval.toolName}
             summary={bApproval.summary}
             recovered={bApproval.live === false}
@@ -540,6 +542,7 @@ function Console() {
 
         {pendingQuestions && !composerLocked && (
           <QuestionPanel
+            key={`${selectedId}:${pendingQuestions.map((q) => q.question).join("|")}`}
             questions={pendingQuestions}
             onClose={() => selectedId && void dismissQuestion(selectedId)}
             closeTitle="忽略此提问"
