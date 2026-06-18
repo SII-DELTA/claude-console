@@ -12,6 +12,7 @@ import type {
   PushSubscriptionJSON,
   Workspace,
 } from "@mac/shared";
+import { recordNetError } from "./net-errors";
 
 export interface PairResult {
   token: string;
@@ -54,7 +55,11 @@ export class ApiClient {
         signal: ac.signal,
       });
     } catch (e) {
-      if (ac.signal.aborted) throw new ApiError(`${method} ${pathname} → timeout`, 0, "无法连接到服务器（超时）");
+      if (ac.signal.aborted) {
+        recordNetError({ method, path: pathname, status: 0, kind: "timeout", message: "请求超时" });
+        throw new ApiError(`${method} ${pathname} → timeout`, 0, "无法连接到服务器（超时）");
+      }
+      recordNetError({ method, path: pathname, status: 0, kind: "network", message: (e as Error)?.message ?? "网络错误" });
       throw new ApiError(`${method} ${pathname} → network`, 0, "无法连接到服务器");
     } finally {
       clearTimeout(timer);
@@ -67,6 +72,14 @@ export class ApiClient {
       } catch {
         /* keep text */
       }
+      recordNetError({
+        method,
+        path: pathname,
+        status: res.status,
+        kind: "http",
+        message: res.statusText || `HTTP ${res.status}`,
+        detail: typeof text === "string" ? text.slice(0, 200) : undefined,
+      });
       throw new ApiError(`${method} ${pathname} → ${res.status}`, res.status, payload ?? text);
     }
     if (res.status === 204) return undefined as T;

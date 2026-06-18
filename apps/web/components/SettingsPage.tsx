@@ -7,6 +7,8 @@ import { getInAppNotify, setInAppNotify } from "../lib/notify";
 import { disablePush, enablePush, getCachedPushStatus, getPushStatus, isIosNonStandalone, isPushSupported, type PushStatus } from "../lib/push";
 import { collectNotifyDiagnostics, diagnosticsEqual, getCachedDiagnostics, sendTestNotification, type NotifyDiagnostics } from "../lib/notify-diagnostics";
 import { getDebugConsole, setDebugConsole } from "../lib/debug-log";
+import { clearNetErrors, diagnoseNetError, formatNetErrorsForCopy, getNetErrors, subscribeNetErrors, type NetError } from "../lib/net-errors";
+import { copyText } from "../lib/clipboard";
 
 /** Reusable iOS-style switch (track + knob), correctly centered. */
 function Toggle({ on, onClick, disabled, label }: { on: boolean; onClick: () => void; disabled?: boolean; label: string }) {
@@ -60,6 +62,8 @@ export function SettingsPage({
       <PushSection />
 
       <DiagnosticsSection />
+
+      <NetworkErrorsSection serverUrl={serverUrl} />
 
       <GeneralSection />
 
@@ -252,6 +256,79 @@ function DiagRow({ label, value, ok }: { label: string; value: string; ok?: bool
       <span className={`ml-auto truncate font-mono ${tone}`}>{value}</span>
     </div>
   );
+}
+
+function NetworkErrorsSection({ serverUrl }: { serverUrl?: string }) {
+  const [errs, setErrs] = useState<NetError[]>([]);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    setErrs([...getNetErrors()].reverse());
+    return subscribeNetErrors(() => setErrs([...getNetErrors()].reverse()));
+  }, []);
+
+  async function copyAll() {
+    const ok = await copyText(
+      formatNetErrorsForCopy({
+        serverUrl,
+        appUrl: typeof location !== "undefined" ? location.href : undefined,
+        ua: typeof navigator !== "undefined" ? navigator.userAgent : undefined,
+      }),
+    );
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }
+  }
+
+  const btn = "rounded-lg border border-line px-2.5 py-1.5 text-[12px] text-ink-dim hover:bg-bg-raised disabled:opacity-40";
+  const tone = (e: NetError) => (e.status === 0 || e.status >= 500 ? "text-danger" : e.status === 409 ? "text-warning" : "text-ink-dim");
+
+  return (
+    <section className="mb-5">
+      <h2 className="mb-2 flex items-center gap-2 text-[12px] font-semibold text-ink-dim">
+        接口错误
+        {errs.length > 0 && (
+          <span className="rounded-full bg-danger/15 px-1.5 text-[11px] font-medium text-danger">{errs.length}</span>
+        )}
+      </h2>
+      <div className="rounded-xl border border-line bg-bg-alt p-3">
+        {errs.length === 0 ? (
+          <div className="py-1.5 text-[12px] text-ink-faint">暂无接口错误 ✓</div>
+        ) : (
+          <div className="max-h-72 space-y-2 overflow-y-auto scroll-thin">
+            {errs.map((e) => (
+              <div key={e.id} className="rounded-lg border border-line/60 bg-bg p-2">
+                <div className="flex items-baseline gap-2 font-mono text-[11px]">
+                  <span className="text-ink-faint">{fmtClock(e.ts)}</span>
+                  <span className={`font-semibold ${tone(e)}`}>{e.status === 0 ? e.kind : e.status}</span>
+                  <span className="min-w-0 flex-1 truncate text-ink-dim">
+                    {e.method} {e.path}
+                  </span>
+                </div>
+                <p className="mt-1 text-[11px] leading-snug text-ink-dim">{diagnoseNetError(e)}</p>
+                {e.detail && <p className="mt-0.5 break-all font-mono text-[10px] text-ink-faint">{e.detail}</p>}
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="mt-2.5 flex flex-wrap gap-1.5">
+          <button onClick={() => void copyAll()} disabled={errs.length === 0} className={btn}>
+            {copied ? "已复制" : "复制给 AI 分析"}
+          </button>
+          <button onClick={() => clearNetErrors()} disabled={errs.length === 0} className={btn}>
+            清空
+          </button>
+        </div>
+        <p className="mt-1.5 text-[11px] text-ink-faint">出错时可截图本面板，或「复制给 AI 分析」粘贴给我排查。</p>
+      </div>
+    </section>
+  );
+}
+
+function fmtClock(ts: number): string {
+  const d = new Date(ts);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
 function DiagnosticsSection() {
