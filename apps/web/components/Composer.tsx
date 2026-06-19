@@ -23,7 +23,6 @@ export function Composer({
   disabled,
   placeholder,
   prefill,
-  onSendToVscode,
 }: {
   onSend: (text: string, images?: ClaudeImage[]) => void | boolean | Promise<void | boolean>;
   onInterrupt: () => void;
@@ -32,9 +31,6 @@ export function Composer({
   placeholder?: string;
   /** External text to drop into the input. Bump `nonce` to re-trigger even with the same text. */
   prefill?: { text: string; nonce: number };
-  /** when set, shows a "→VSCode" button that pushes the current text to the desktop session.
-   * Returns whether it succeeded so the draft can be restored on failure. */
-  onSendToVscode?: (text: string) => Promise<{ ok: boolean }> | void;
 }) {
   const [text, setText] = useState("");
   const [images, setImages] = useState<PickedImage[]>([]);
@@ -233,27 +229,6 @@ export function Composer({
     </button>
   );
 
-  const VscodeBtn = onSendToVscode ? (
-    <button
-      onClick={() => {
-        const t = text.trim();
-        if (!t || disabled) return;
-        setText("");
-        void Promise.resolve(onSendToVscode(t)).then((r) => {
-          if (r && !r.ok) setText(t); // failed (e.g. no Accessibility perm) → restore the draft
-        });
-      }}
-      disabled={disabled || !text.trim()}
-      className="btn-ghost shrink-0 !px-2 !py-2 text-ink-faint hover:text-accent disabled:opacity-40"
-      title="发到桌面 VSCode 会话"
-      aria-label="发到 VSCode"
-    >
-      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" />
-      </svg>
-    </button>
-  ) : null;
-
   const SendOrStop = streaming ? (
     <button onClick={onInterrupt} className="btn-ghost shrink-0 !px-2.5 !py-2 text-danger" title="中断" aria-label="中断">
       <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
@@ -351,7 +326,6 @@ export function Composer({
                 </span>
               </div>
             </button>
-            {!streaming && VscodeBtn}
             {SendOrStop}
           </div>
         </div>
@@ -387,7 +361,6 @@ export function Composer({
               </span>
             )}
           </button>
-          {!streaming && VscodeBtn}
           {SendOrStop}
         </div>
       )}

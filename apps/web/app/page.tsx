@@ -284,13 +284,21 @@ function Console() {
   // Sending would fight that process for the same session file, so block it and
   // require an explicit takeover.
   const externalLive = !!selected?.isLive && !selected?.drivenByAgent && driveStatus !== "streaming";
-  const composerLocked = externalLive && !takeoverArmed;
+  // The selected session's project has a desktop VSCode window → the send button routes INTO
+  // that live desktop session (inject) instead of taking it over with a phone-driven resume.
+  const selectedHasVscode = !!ideState?.projects.find((p) => p.cwd === selected?.cwd)?.hasVscode;
+  // Only route to inject when THIS session is actually live on the desktop (a tab/terminal in
+  // that window) — not merely any session in a project that happens to have VSCode open. A
+  // phone-driven session keeps phone-driving even if a VSCode window exists for its project.
+  const desktopControllable =
+    !!selectedId && selectedHasVscode && ideBadgeFor(ideState, selectedId) !== null;
+  // External-live sessions normally lock the composer until an explicit takeover — but a
+  // desktop-controllable one stays open, because send routes to inject (no takeover needed).
+  const composerLocked = externalLive && !takeoverArmed && !desktopControllable;
   // Show interrupt (not an input) whenever the open session is actively running a turn —
   // locally streaming, OR our agent is driving it (e.g. we switched away and back). Stops
   // a follow-up message from being queued onto a still-running turn.
   const sessionBusy = driveStatus === "streaming" || (!!selected?.driving && !!selected?.drivenByAgent);
-  // the selected session's project has a desktop VSCode window → offer "send to VSCode"
-  const selectedHasVscode = !!ideState?.projects.find((p) => p.cwd === selected?.cwd)?.hasVscode;
   // 方案 B: an AskUserQuestion intercepted live via the control protocol (shows
   // even while the turn is "streaming" — the turn is paused awaiting the answer).
   const bPermission =
@@ -327,6 +335,13 @@ function Console() {
       for (const q of bPermission.questions) answers[q.question] = q.multiSelect ? [text] : text;
       void answerPermission(answers);
       return true;
+    }
+    // Session is open in a desktop VSCode window and the user hasn't armed a takeover →
+    // inject into that live desktop session (continues in the desktop window) instead of
+    // taking it over with a phone-driven resume. The response streams back via tail sync.
+    if (desktopControllable && !takeoverArmed && selectedId && !images?.length) {
+      const r = await sendToVscode(selectedId, text);
+      return !!r.ok; // false → composer restores the draft
     }
     // when armed (or taking over external-live), force the resume
     return await sendPrompt(text, { force: externalLive || undefined, images });
@@ -644,17 +659,16 @@ function Console() {
           streaming={sessionBusy}
           disabled={composerLocked}
           prefill={draft}
-          onSendToVscode={
-            selectedId && selectedHasVscode ? (text) => sendToVscode(selectedId, text) : undefined
-          }
           placeholder={
             composerLocked
               ? "运行中·先接管…"
               : takeoverArmed
                 ? "接管并续写…"
-                : selectedId
-                  ? "续写会话…"
-                  : "开启新会话…"
+                : desktopControllable
+                  ? "发送到桌面 VSCode 会话…"
+                  : selectedId
+                    ? "续写会话…"
+                    : "开启新会话…"
           }
         />
       </main>
