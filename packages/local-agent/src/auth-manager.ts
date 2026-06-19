@@ -37,6 +37,8 @@ export class AuthManager {
       codeLength?: number;
       /** when set, enables password login (cleartext compared constant-time) */
       password?: string;
+      /** a token unused for this long is treated as expired (default 90d, 0 = never). */
+      tokenIdleTtlMs?: number;
     } = {},
   ) {}
 
@@ -154,7 +156,18 @@ export class AuthManager {
     const device = this.store.findDeviceByTokenHash(hash);
     if (!device) return null;
     if (device.revoked) return null;
-    this.store.touchDevice(device.id, new Date(this.now()).toISOString());
+    const now = this.now();
+    // Idle expiry: a token not used within the window is auto-revoked, so a leaked-but-
+    // abandoned token can't stay valid forever. Active devices slide the window on each use.
+    const idleTtl = this.opts.tokenIdleTtlMs ?? 90 * 24 * 60 * 60_000;
+    if (idleTtl > 0 && device.lastSeenAt) {
+      const lastSeen = Date.parse(device.lastSeenAt);
+      if (Number.isFinite(lastSeen) && now - lastSeen > idleTtl) {
+        this.store.revokeDevice(device.id);
+        return null;
+      }
+    }
+    this.store.touchDevice(device.id, new Date(now).toISOString());
     return device;
   }
 

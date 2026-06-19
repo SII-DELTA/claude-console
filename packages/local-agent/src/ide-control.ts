@@ -134,7 +134,9 @@ function ancestryInVscode(pid: number | null, snap: Map<number, { ppid: number; 
   for (let i = 0; i < 8 && cur != null && cur > 1; i++) {
     const rec = snap.get(cur);
     if (!rec) return false;
-    if (/Visual Studio Code|Code Helper|Electron|[/ ]Code\b/.test(rec.comm)) return true;
+    // Anchor a bare "Code" to a path basename so we don't flag an unrelated process whose
+    // name merely contains " Code"; the Helper/Electron markers cover the rest of VSCode.
+    if (/Visual Studio Code|Code Helper|Electron|(?:^|\/)Code$/.test(rec.comm)) return true;
     cur = rec.ppid;
   }
   return false;
