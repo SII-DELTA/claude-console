@@ -281,9 +281,14 @@ export async function injectToSession(opts: {
   if (!cwd) return { ok: false, via: "none", sent: false, detail: "找不到会话的 cwd" };
   const isTerminal = await pidHasTty(pid);
 
-  // 1) Plugin path (preferred): silent for terminals; webview opens a normal tab + prefill.
+  // 1) Plugin path (preferred). Terminal sessions are fully programmatic (sendText). Webview
+  // sessions: the extension has no "send to an open session" command (editor.open ignores a
+  // prompt once the tab is open), so the plugin just opens+focuses the input and we paste here.
   const ep = endpointForCwd(cwd);
   if (ep) {
+    // For the webview paste, bring VS Code forward FIRST (cross-Space via `code`) so the plugin's
+    // input-focus is the last focus action before we paste; terminal mode needs no focus.
+    if (!isTerminal) await focusWindow(cwd);
     const r = await postPlugin(ep, {
       sessionId: opts.sessionId,
       text: opts.text,
@@ -291,11 +296,19 @@ export async function injectToSession(opts: {
       mode: isTerminal ? "terminal" : "auto",
     });
     // Any HTTP response (not status 0) means the plugin received the request and ran the
-    // command — trust its verdict and NEVER fall back, or we'd double-inject the prefill.
+    // command — trust its verdict and NEVER fall back, or we'd double-inject.
     if (r.status !== 0) {
       const applied = r.json?.applied === true;
       let sent = !!r.json?.sent;
-      if (applied && opts.send && r.json?.needsEnter) {
+      let ok = applied;
+      if (applied && r.json?.needsPaste) {
+        // Webview: plugin opened+focused the input → paste the text + Enter via keyboard and
+        // report the REAL result (osascript fails if VS Code isn't frontmost / Accessibility
+        // isn't granted → caller restores the draft instead of silently swallowing it).
+        ok = await pasteAndMaybeSend(opts.text, opts.send);
+        sent = ok && opts.send;
+      } else if (applied && opts.send && r.json?.needsEnter) {
+        // legacy plugin (pre-needsPaste): it prefilled, we only press Enter
         await new Promise((res) => setTimeout(res, 400));
         sent = (
           await runCmd("osascript", [
@@ -304,7 +317,7 @@ export async function injectToSession(opts: {
           ])
         ).ok;
       }
-      return { ok: applied, via: "plugin", sent, detail: r.json?.via ?? r.json?.error };
+      return { ok, via: "plugin", sent, detail: r.json?.via ?? r.json?.error };
     }
     // status 0 = plugin unreachable (didn't act) → safe to fall back to the URI path below.
   }
