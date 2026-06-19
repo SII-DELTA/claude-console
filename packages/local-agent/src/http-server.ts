@@ -28,7 +28,9 @@ import type { WorkspaceReader } from "./workspace-reader.js";
 import type { ClaudeStore } from "./claude-store.js";
 import { ClaudeDriver, SessionLiveError } from "./claude-driver.js";
 import { readUsageCache } from "./usage-cache.js";
+import { rateLimited } from "./rate-limit.js";
 import { transcribe, asrConfigured } from "./asr.js";
+import type { FastifyReply, FastifyRequest } from "fastify";
 import { readIdeState, injectToSession, openInVscode, cwdOfSession } from "./ide-control.js";
 import { readFile, stat, realpath } from "node:fs/promises";
 import { resolve as resolvePath, relative as relativePath, isAbsolute, extname, sep } from "node:path";
@@ -81,6 +83,25 @@ export async function buildHttpApp(opts: BuildHttpOptions): Promise<FastifyInsta
         reply.code(401).send({ error: "unauthorized", code: ERROR_CODES.UNAUTHORIZED });
       }
     });
+  }
+
+  // Per-caller rate limit for billable/expensive routes. Keyed by bearer token when present
+  // (per-device), else by source IP. Returns a 429 payload to `return`, or null to proceed.
+  function rateGuard(
+    req: FastifyRequest,
+    reply: FastifyReply,
+    name: string,
+    max: number,
+    windowMs: number,
+  ): { error: string; code: string; retryAfterMs: number } | null {
+    const auth = req.headers.authorization;
+    const tok = auth?.startsWith("Bearer ") ? auth.slice(7) : "";
+    const key = `${name}:${tok || req.ip}`;
+    if (rateLimited(key, max, windowMs)) {
+      reply.code(429);
+      return { error: "rate_limited", code: ERROR_CODES.RATE_LIMITED, retryAfterMs: windowMs };
+    }
+    return null;
   }
 
   // Unauthenticated probe. Exposes whether a password is required so clients can
@@ -382,6 +403,9 @@ export async function buildHttpApp(opts: BuildHttpOptions): Promise<FastifyInsta
   });
 
   app.post("/claude/sessions", async (req, reply) => {
+    // Each new session spawns a billed Claude process — cap to stop loops burning tokens.
+    const rl = rateGuard(req, reply, "new_session", 10, 60_000);
+    if (rl) return rl;
     const parsed = ClaudeCreateBodySchema.safeParse(req.body);
     if (!parsed.success) {
       reply.code(400);
@@ -429,6 +453,9 @@ export async function buildHttpApp(opts: BuildHttpOptions): Promise<FastifyInsta
   );
 
   app.post<{ Params: { id: string } }>("/claude/sessions/:id/continue", async (req, reply) => {
+    // continue == a billed model turn; cap per caller (generous for a human, blocks loops).
+    const rl = rateGuard(req, reply, "continue", 30, 60_000);
+    if (rl) return rl;
     const parsed = ClaudeContinueBodySchema.safeParse(req.body);
     if (!parsed.success) {
       reply.code(400);
@@ -588,6 +615,9 @@ export async function buildHttpApp(opts: BuildHttpOptions): Promise<FastifyInsta
 
   // ─────────────────── Voice transcription (Tencent ASR) ───────────────────
   app.post("/asr", async (req, reply) => {
+    // Upstream ASR is billed per call — cap to avoid quota/cost abuse.
+    const rl = rateGuard(req, reply, "asr", 30, 60_000);
+    if (rl) return rl;
     const body = req.body as { audioBase64?: string; format?: string } | undefined;
     if (!body?.audioBase64 || typeof body.audioBase64 !== "string") {
       reply.code(400);
@@ -685,6 +715,9 @@ export async function buildHttpApp(opts: BuildHttpOptions): Promise<FastifyInsta
   // End-to-end push test: actually send via the push service to every stored subscription
   // and report per-endpoint results (the in-app diagnostics only test local Notification).
   app.post("/push/test", async (req, reply) => {
+    // Fans out a real push to every subscription — cap so it can't be used to spam endpoints.
+    const rl = rateGuard(req, reply, "push_test", 10, 60_000);
+    if (rl) return rl;
     if (!opts.push) {
       reply.code(503);
       return { error: "push_disabled", code: ERROR_CODES.INTERNAL };

@@ -6,6 +6,7 @@ import type { AuthManager } from "./auth-manager.js";
 import type { SessionManager } from "./session-manager.js";
 import type { Bus } from "./bus.js";
 import type { WorkspaceReader } from "./workspace-reader.js";
+import { rateLimited } from "./rate-limit.js";
 
 export interface WsServerOptions {
   bus: Bus;
@@ -110,6 +111,11 @@ export class WsBridge {
         this.opts.sessions.interrupt(msg.sessionId);
         return;
       case "client:create_session": {
+        // Cap inbound session spawns per device so a runaway client can't fork-bomb ptys.
+        if (rateLimited(`ws_create:${client.deviceId}`, 20, 60_000)) {
+          this.send(client.ws, { type: "server:error", message: "rate_limited" });
+          return;
+        }
         const s = this.opts.sessions.create(msg.payload);
         this.send(client.ws, { type: "server:session_created", session: s });
         return;
@@ -209,15 +215,31 @@ export class WsBridge {
     }
   }
 
+  // A client whose socket buffer is this far behind is treated as a slow/zombie consumer.
+  // WS is only a hint (clients resync authoritatively via the HTTP byte-cursor tail), so we
+  // can safely drop frames for a lagging client instead of letting its buffer grow unbounded.
+  private static readonly WS_SOFT_BUFFER = 1 << 20; // 1MB: skip this frame, client polls to catch up
+  private static readonly WS_HARD_BUFFER = 8 << 20; // 8MB: hopelessly behind → terminate the zombie
+
   broadcast(msg: ServerMessage): void {
     const data = JSON.stringify(msg);
     for (const c of this.clients) {
-      if (c.ws.readyState === c.ws.OPEN) {
+      if (c.ws.readyState !== c.ws.OPEN) continue;
+      const buffered = c.ws.bufferedAmount;
+      if (buffered > WsBridge.WS_HARD_BUFFER) {
         try {
-          c.ws.send(data);
+          c.ws.terminate();
         } catch {
           /* noop */
         }
+        this.clients.delete(c);
+        continue;
+      }
+      if (buffered > WsBridge.WS_SOFT_BUFFER) continue; // slow client: drop this frame, it'll resync
+      try {
+        c.ws.send(data);
+      } catch {
+        /* noop */
       }
     }
   }
