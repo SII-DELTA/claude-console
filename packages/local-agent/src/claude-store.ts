@@ -46,6 +46,8 @@ export class ClaudeStore {
   private metaCache = new Map<string, { mtimeMs: number; size: number; acc: SessionAccumulator }>();
   /** explicit active project dir override (set when the user switches project) */
   private activeDir: string | null = null;
+  /** id → resolved jsonl path cache, so cross-project lookups don't rescan every call */
+  private sessionPathCache = new Map<string, string>();
   /** predicate injected by the runtime: is this session driven by our agent? */
   private drivenPredicate: ((id: string) => boolean) | null = null;
   /** predicate injected by the runtime: is our agent actively running a turn for it? */
@@ -129,17 +131,17 @@ export class ClaudeStore {
 
   /** Current open (unanswered) AskUserQuestion ids for a session. */
   async getOpenQuestionIds(id: string): Promise<string[]> {
-    if (!SAFE_ID.test(id)) return [];
-    const file = this.sessionFile(id);
-    if (!existsSync(file)) return [];
+    const file = await this.resolveSessionFile(id);
+    if (!file) return [];
     const { acc } = await this.foldFile(file, false);
     return [...acc.openQuestionIds];
   }
 
   /** Re-read a session's meta and broadcast it (e.g. after a dismiss). */
   async refreshSession(id: string): Promise<void> {
-    if (!SAFE_ID.test(id)) return;
-    const meta = await this.readSessionMeta(this.sessionFile(id));
+    const file = await this.resolveSessionFile(id);
+    if (!file) return;
+    const meta = await this.readSessionMeta(file);
     if (meta) this.bus?.emit("claude:session_updated", meta);
   }
 
@@ -274,6 +276,32 @@ export class ClaudeStore {
     return join(this.projectDir(), `${id}.jsonl`);
   }
 
+  /** Resolve a session id to its jsonl path. The dashboard / sessions lists are cross-project,
+   * so a clicked session may not live in the *active* project dir — fall back to a scan across
+   * all project dirs (cached) instead of 404-ing. Returns null if no such file exists. */
+  private async resolveSessionFile(id: string): Promise<string | null> {
+    if (!SAFE_ID.test(id)) return null;
+    // 1) fast path: the active project dir (the common case)
+    const inActive = this.sessionFile(id);
+    if (existsSync(inActive)) {
+      this.sessionPathCache.set(id, inActive);
+      return inActive;
+    }
+    // 2) cached resolution from a prior cross-project lookup (re-validate it still exists)
+    const cached = this.sessionPathCache.get(id);
+    if (cached && existsSync(cached)) return cached;
+    // 3) scan every project dir (incl. hidden — a session can be opened directly by id)
+    const target = `${id}.jsonl`;
+    for (const f of await this.allSessionFiles(true)) {
+      if (basename(f) === target) {
+        this.sessionPathCache.set(id, f);
+        return f;
+      }
+    }
+    this.sessionPathCache.delete(id);
+    return null;
+  }
+
   async listSessions(): Promise<ClaudeSession[]> {
     const dir = this.projectDir();
     const files = await safeList(dir);
@@ -321,9 +349,8 @@ export class ClaudeStore {
     /** Byte cursor at end-of-file, for subsequent incremental `tail()` reads. */
     cursor: number;
   } | null> {
-    if (!SAFE_ID.test(id)) return null;
-    const file = this.sessionFile(id);
-    if (!existsSync(file)) return null;
+    const file = await this.resolveSessionFile(id);
+    if (!file) return null;
     const { acc, consumedOffset } = await this.foldFile(file, true);
     const session = this.buildSession(id, file, acc, await safeMtimeMs(file));
     if (!session) return null;
@@ -347,9 +374,8 @@ export class ClaudeStore {
     id: string,
     fromByte: number,
   ): Promise<{ session: ClaudeSession; messages: ClaudeMessage[]; cursor: number } | null> {
-    if (!SAFE_ID.test(id)) return null;
-    const file = this.sessionFile(id);
-    if (!existsSync(file)) return null;
+    const file = await this.resolveSessionFile(id);
+    if (!file) return null;
     const size = (await safeSize(file)) ?? 0;
     let from = fromByte >= 0 ? fromByte : 0;
     if (size < from) from = 0; // file truncated/rewritten → re-read from the top
@@ -403,7 +429,12 @@ export class ClaudeStore {
     let raw: string;
     try {
       raw = await fs.readFile(file, "utf8");
-    } catch {
+    } catch (err) {
+      // A missing file is benign (session gone); anything else (EACCES/EIO) silently
+      // returning an empty session would hide the session — surface it instead.
+      if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") {
+        console.warn(`[claude-store] foldFile 读取失败 ${file}:`, (err as Error)?.message ?? err);
+      }
       return { acc, consumedOffset: 0 };
     }
     for (const line of raw.split("\n")) {
@@ -464,15 +495,16 @@ export class ClaudeStore {
 
   /** Returns true if the session file is being written within the live window. */
   async isLive(id: string): Promise<boolean> {
-    if (!SAFE_ID.test(id)) return false;
-    const m = await safeMtimeMs(this.sessionFile(id));
+    const file = await this.resolveSessionFile(id);
+    if (!file) return false;
+    const m = await safeMtimeMs(file);
     return m != null && nowMs() - m < LIVE_WINDOW_MS;
   }
 
   /** Cheap JSONL byte size (stat only, no fold) — used to skip prewarming huge sessions. */
   async sessionFileSize(id: string): Promise<number | null> {
-    if (!SAFE_ID.test(id)) return null;
-    return safeSize(this.sessionFile(id));
+    const file = await this.resolveSessionFile(id);
+    return file ? safeSize(file) : null;
   }
 
   async start(): Promise<void> {

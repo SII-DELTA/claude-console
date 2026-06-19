@@ -237,6 +237,26 @@ describe("ClaudeStore", () => {
     expect(await store.switchProject("/etc")).toBeNull();
   });
 
+  it("opens a session living in a non-active project dir (cross-project, no 404)", async () => {
+    // A session in another project — the dashboard/sessions lists are cross-project, so
+    // clicking it must resolve even though the active project dir is workspaceRoot.
+    const otherCwd = "/Users/test/elsewhere";
+    const otherId = "abcdef01-2222-3333-4444-555555555555";
+    const dir = join(projectsRoot, encodeProjectDir(otherCwd));
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(join(dir, `${otherId}.jsonl`), fixture(otherCwd).replaceAll(SESSION_ID, otherId));
+
+    // active project is still workspaceRoot (no switchProject)
+    const detail = await store.getSession(otherId);
+    expect(detail).not.toBeNull();
+    expect(detail!.messages.length).toBeGreaterThan(0);
+    // just-written file resolves cross-project for liveness/size/tail too
+    expect(await store.isLive(otherId)).toBe(true);
+    expect(await store.sessionFileSize(otherId)).toBeGreaterThan(0);
+    const tail = await store.tail(otherId, 0);
+    expect(tail).not.toBeNull();
+  });
+
   it("reads full session messages", async () => {
     const detail = await store.getSession(SESSION_ID);
     expect(detail).not.toBeNull();
