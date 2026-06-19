@@ -37,6 +37,7 @@ interface InjectEndpoint {
   port: number;
   token: string;
   workspaceFolders: string[];
+  pid?: number;
 }
 
 function readJsonDir<T>(dir: string): T[] {
@@ -62,9 +63,13 @@ export function ideVscodeDirs(): Set<string> {
   return set;
 }
 
-/** Inject-plugin endpoints, indexed for "does this workspace have the plugin". */
+/** Inject-plugin endpoints, indexed for "does this workspace have the plugin". A crashed
+ * VSCode window can leave a discovery file behind whose port may get reused by an unrelated
+ * process — drop any endpoint whose owning pid is dead so we never POST a prompt to it. */
 export function injectEndpoints(): InjectEndpoint[] {
-  return readJsonDir<InjectEndpoint>(INJECT_DIR).filter((e) => e && e.port && e.token);
+  return readJsonDir<InjectEndpoint>(INJECT_DIR).filter(
+    (e) => e && e.port && e.token && (e.pid == null || pidAlive(e.pid)),
+  );
 }
 
 function endpointForCwd(cwd: string): InjectEndpoint | null {
@@ -147,14 +152,22 @@ export function cwdOfSession(sessionId: string): string | null {
 }
 
 let ideCache: { at: number; val: IdeState } | null = null;
+let ideInFlight: Promise<IdeState> | null = null;
 
 /** Aggregate detection for the console UI. Cached briefly so a 20s multi-client poll doesn't
- * run a full `ps` snapshot every call. */
+ * run a full `ps` snapshot every call; concurrent callers during a miss share one computation. */
 export async function readIdeState(): Promise<IdeState> {
   if (ideCache && Date.now() - ideCache.at < 4000) return ideCache.val;
-  const val = await computeIdeState();
-  ideCache = { at: Date.now(), val };
-  return val;
+  if (ideInFlight) return ideInFlight;
+  ideInFlight = computeIdeState()
+    .then((val) => {
+      ideCache = { at: Date.now(), val };
+      return val;
+    })
+    .finally(() => {
+      ideInFlight = null;
+    });
+  return ideInFlight;
 }
 
 async function computeIdeState(): Promise<IdeState> {
