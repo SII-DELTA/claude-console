@@ -313,7 +313,7 @@ export class ApiClient {
   /** Which projects have a desktop VSCode/plugin, and per-session run/terminal state. */
   ideState(): Promise<{
     projects: Array<{ cwd: string; hasVscode: boolean; hasPlugin: boolean }>;
-    sessions: Array<{ sessionId: string; cwd: string; state: string; alive: boolean; terminal: boolean }>;
+    sessions: Array<{ sessionId: string; cwd: string; state: string; alive: boolean; terminal: boolean; inVscode: boolean }>;
   }> {
     return this.request("GET", "/ide/state", undefined, { timeoutMs: 8000 });
   }

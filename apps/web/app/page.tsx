@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { ClaudeProject } from "@mac/shared";
-import { useAppStore } from "../lib/store";
+import { useAppStore, ideBadgeFor } from "../lib/store";
 import { ConnectForm } from "../components/ConnectForm";
 import { SessionList } from "../components/SessionList";
 import { Timeline } from "../components/Timeline";
@@ -419,6 +419,7 @@ function Console() {
             </svg>
           </button>
           <span className="min-w-0 flex-1 truncate text-sm font-medium">{selected?.title ?? "新会话"}</span>
+          {selectedId && ideBadgeFor(ideState, selectedId) === "vscode" && <Badge tone="info">VSCode</Badge>}
           <div className="ml-auto flex shrink-0 items-center gap-1.5">
             <UsageDisplay />
             <ConnDot ok={wsConnected} />
@@ -437,6 +438,8 @@ function Console() {
             ) : (
               <Badge tone="warn">终端运行中</Badge>
             ))}
+          {selectedId && ideBadgeFor(ideState, selectedId) === "vscode" && <Badge tone="info">VSCode</Badge>}
+          {selectedId && ideBadgeFor(ideState, selectedId) === "terminal" && <Badge tone="warn">终端</Badge>}
           <UsageDisplay />
           <button onClick={() => setConnection(null)} className="btn-ghost !py-1 text-xs">
             断开
@@ -984,11 +987,13 @@ function Toast({ message, onClose }: { message: string; onClose: () => void }) {
   );
 }
 
-function Badge({ children, tone = "ok" }: { children: React.ReactNode; tone?: "ok" | "warn" }) {
+function Badge({ children, tone = "ok" }: { children: React.ReactNode; tone?: "ok" | "warn" | "info" }) {
   const cls =
     tone === "warn"
       ? "bg-warning/20 text-warning"
-      : "bg-success/20 text-success";
+      : tone === "info"
+        ? "bg-info/20 text-info"
+        : "bg-success/20 text-success";
   return (
     <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${cls}`}>{children}</span>
   );

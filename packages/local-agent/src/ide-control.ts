@@ -25,6 +25,8 @@ export interface IdeSession {
   pid: number | null;
   alive: boolean;
   terminal: boolean;
+  /** the claude process is a child of a VSCode window (vs agent `--resume` / external) */
+  inVscode: boolean;
 }
 export interface IdeState {
   projects: IdeProject[];
@@ -92,6 +94,29 @@ async function pidHasTty(pid: number | null): Promise<boolean> {
   return out !== "" && out !== "??" && out !== "?";
 }
 
+/** One process-table snapshot: pid → { ppid, tty, comm }. Avoids per-session ps calls. */
+async function processSnapshot(): Promise<Map<number, { ppid: number; tty: string; comm: string }>> {
+  const map = new Map<number, { ppid: number; tty: string; comm: string }>();
+  const out = await execFileP("ps", ["-axo", "pid=,ppid=,tty=,comm="]);
+  for (const line of out.split("\n")) {
+    const m = line.match(/^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/);
+    if (m) map.set(Number(m[1]), { ppid: Number(m[2]), tty: m[3] ?? "??", comm: m[4] ?? "" });
+  }
+  return map;
+}
+
+/** Walk a pid's ancestry; true if any ancestor is a VSCode process (Code Helper / Electron). */
+function ancestryInVscode(pid: number | null, snap: Map<number, { ppid: number; comm: string }>): boolean {
+  let cur = pid;
+  for (let i = 0; i < 8 && cur != null && cur > 1; i++) {
+    const rec = snap.get(cur);
+    if (!rec) return false;
+    if (/Visual Studio Code|Code Helper|Electron|[/ ]Code\b/.test(rec.comm)) return true;
+    cur = rec.ppid;
+  }
+  return false;
+}
+
 /** Session id → cwd, from the hook state files. */
 export function cwdOfSession(sessionId: string): string | null {
   const f = join(STATE_DIR, `${sessionId}.json`);
@@ -116,18 +141,23 @@ export async function readIdeState(): Promise<IdeState> {
   }));
 
   const states = readJsonDir<{ sessionId?: string; cwd?: string; state?: string; pid?: number }>(STATE_DIR);
-  const sessions: IdeSession[] = await Promise.all(
-    states
-      .filter((s) => s.sessionId)
-      .map(async (s) => ({
+  const snap = await processSnapshot();
+  const sessions: IdeSession[] = states
+    .filter((s) => s.sessionId)
+    .map((s) => {
+      const pid = s.pid ?? null;
+      const rec = pid != null ? snap.get(pid) : undefined;
+      const tty = rec?.tty ?? "??";
+      return {
         sessionId: s.sessionId!,
         cwd: s.cwd ?? "",
         state: s.state ?? "idle",
-        pid: s.pid ?? null,
-        alive: pidAlive(s.pid ?? null),
-        terminal: await pidHasTty(s.pid ?? null),
-      })),
-  );
+        pid,
+        alive: pidAlive(pid),
+        terminal: tty !== "??" && tty !== "?" && tty !== "",
+        inVscode: ancestryInVscode(pid, snap),
+      };
+    });
   return { projects, sessions };
 }
 

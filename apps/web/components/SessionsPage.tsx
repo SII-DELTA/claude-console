@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { ClaudeProject, ClaudeSession } from "@mac/shared";
-import { useAppStore } from "../lib/store";
+import { useAppStore, ideBadgeFor } from "../lib/store";
 import { ProjectBar, projectStats } from "./ProjectBar";
 
 const sw = { fill: "none", stroke: "currentColor", strokeWidth: 1.5, strokeLinecap: "round", strokeLinejoin: "round" } as const;
@@ -77,6 +77,8 @@ function attentionOf(s: ClaudeSession): { label: string; tone: string } | null {
 }
 
 function SessionRow({ s, onSelect }: { s: ClaudeSession; onSelect: (id: string) => void }) {
+  const ide = useAppStore((st) => st.ideState);
+  const badge = ideBadgeFor(ide, s.id);
   const att = attentionOf(s);
   const running = !!s.driving && !att;
   const dotColor = att ? "bg-accent" : running ? "bg-success" : "bg-ink-faint/50";
@@ -95,7 +97,11 @@ function SessionRow({ s, onSelect }: { s: ClaudeSession; onSelect: (id: string) 
       <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${dotColor} ${running ? "animate-pulse" : ""}`} />
       <div className="min-w-0 flex-1">
         <div className="line-clamp-2 text-[14px] font-medium leading-snug text-ink">{cardTitle(s)}</div>
-        <div className={`mt-0.5 truncate text-[11px] ${att ? att.tone : "text-ink-faint"}`}>{sub}</div>
+        <div className={`mt-0.5 flex items-center gap-1.5 truncate text-[11px] ${att ? att.tone : "text-ink-faint"}`}>
+          {badge === "vscode" && <span className="rounded bg-info/15 px-1 text-[10px] font-medium text-info">VSCode</span>}
+          {badge === "terminal" && <span className="rounded bg-warning/15 px-1 text-[10px] font-medium text-warning">终端</span>}
+          <span className="truncate">{sub}</span>
+        </div>
       </div>
       <span className="mt-0.5 shrink-0 text-[11px] text-ink-faint">{relTime(s.updatedAt)}</span>
     </button>

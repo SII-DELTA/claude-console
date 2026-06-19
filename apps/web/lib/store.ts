@@ -150,7 +150,14 @@ export type DriveStatus = "idle" | "streaming";
 /** Desktop IDE detection (which projects have VSCode/plugin, per-session run state). */
 export interface IdeState {
   projects: Array<{ cwd: string; hasVscode: boolean; hasPlugin: boolean }>;
-  sessions: Array<{ sessionId: string; cwd: string; state: string; alive: boolean; terminal: boolean }>;
+  sessions: Array<{ sessionId: string; cwd: string; state: string; alive: boolean; terminal: boolean; inVscode: boolean }>;
+}
+
+/** Per-session desktop badge: this session runs in a desktop VSCode (or terminal). */
+export function ideBadgeFor(ide: IdeState | null, sessionId: string): "vscode" | "terminal" | null {
+  const s = ide?.sessions.find((x) => x.sessionId === sessionId);
+  if (!s || !s.alive) return null;
+  return s.terminal ? "terminal" : s.inVscode ? "vscode" : null;
 }
 
 /** "auto" = inject + press Enter (sends); "stage" = prefill only (you hit Enter at desktop). */
