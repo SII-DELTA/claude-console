@@ -351,17 +351,88 @@ export class ClaudeStore {
   } | null> {
     const file = await this.resolveSessionFile(id);
     if (!file) return null;
+
+    // Tail fast path: the initial open asks for the last N messages (no `before`). Read only
+    // the tail of the file instead of folding the whole JSONL (which parses + retains every
+    // message — tens of MB / a long event-loop stall on a big session). Meta (total/title/
+    // cursor) comes from the cheap cached path.
+    const limitOnly = opts?.limit != null && opts.limit > 0 ? opts.limit : null;
+    if (opts?.before == null && limitOnly != null) {
+      const session = await this.readSessionMeta(file);
+      if (!session) return null;
+      const total = session.messageCount;
+      const { messages, cursor } = await this.readTailMessages(file, limitOnly);
+      return { session, messages, total, offset: Math.max(0, total - messages.length), cursor };
+    }
+
+    // Whole-history / load-earlier path: fold the full file (back-compat for internal callers
+    // and the `before` page — infrequent).
     const { acc, consumedOffset } = await this.foldFile(file, true);
     const session = this.buildSession(id, file, acc, await safeMtimeMs(file));
     if (!session) return null;
     const all = acc.messages;
     const total = all.length;
-    // No limit → whole history (back-compat for internal callers / driver).
     // before: absolute index; return the page ending just before it.
     const end = opts?.before != null ? Math.max(0, Math.min(opts.before, total)) : total;
     const limit = opts?.limit != null && opts.limit > 0 ? opts.limit : total;
     const start = Math.max(0, end - limit);
     return { session, messages: all.slice(start, end), total, offset: start, cursor: consumedOffset };
+  }
+
+  /** Read just the last `n` messages by scanning the file backwards in chunks at the byte level
+   * (so multi-byte UTF-8 is never split). Only the collected lines are JSON-parsed. Returns the
+   * messages in chronological order plus the end-of-file cursor (byte offset past the last
+   * complete line), identical to what a full fold would yield for the same tail slice. */
+  private async readTailMessages(
+    file: string,
+    n: number,
+  ): Promise<{ messages: ClaudeMessage[]; cursor: number }> {
+    const size = (await safeSize(file)) ?? 0;
+    if (size === 0) return { messages: [], cursor: 0 };
+    const CHUNK = 64 * 1024;
+    const handle = await fs.open(file, "r");
+    try {
+      let pos = size; // buf holds bytes [pos, size)
+      let buf = Buffer.alloc(0);
+      let messages: ClaudeMessage[] = [];
+      while (true) {
+        const from = Math.max(0, pos - CHUNK);
+        const len = pos - from;
+        const chunk = Buffer.alloc(len);
+        let off = 0;
+        while (off < len) {
+          const { bytesRead } = await handle.read(chunk, off, len - off, from + off);
+          if (bytesRead === 0) break;
+          off += bytesRead;
+        }
+        buf = Buffer.concat([chunk.subarray(0, off), buf]);
+        pos = from;
+        const atBof = pos === 0;
+        // The leading line is incomplete until we reach BOF — start parsing after the first \n.
+        let regionStart = 0;
+        if (!atBof) {
+          const firstNl = buf.indexOf(0x0a);
+          if (firstNl === -1) continue; // no complete line yet → read more
+          regionStart = firstNl + 1;
+        }
+        // A trailing line with no closing \n is an in-progress write → drop it (same as tail()).
+        const trailingPartial = buf.length > 0 && buf[buf.length - 1] !== 0x0a;
+        const lines = buf.subarray(regionStart).toString("utf8").split("\n");
+        if (trailingPartial && lines.length > 0) lines.pop();
+        const parsed: ClaudeMessage[] = [];
+        for (const line of lines) {
+          const p = parseLine(line);
+          if (p?.message) parsed.push(p.message);
+        }
+        messages = parsed;
+        if (messages.length >= n || atBof) break;
+      }
+      const lastNl = buf.lastIndexOf(0x0a);
+      const cursor = lastNl >= 0 ? pos + lastNl + 1 : 0;
+      return { messages: messages.slice(Math.max(0, messages.length - n)), cursor };
+    } finally {
+      await handle.close();
+    }
   }
 
   /**

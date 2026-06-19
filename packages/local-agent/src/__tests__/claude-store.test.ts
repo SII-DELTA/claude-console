@@ -288,6 +288,79 @@ describe("ClaudeStore", () => {
     expect(clamped!.messages).toEqual(full!.messages.slice(1));
   });
 
+  it("tail fast-path equals the full-fold slice (incl. meta lines, tools, 多字节)", async () => {
+    // Build a longer session: interleaved meta lines + many turns, a tool_use/result pair,
+    // and multi-byte (Chinese) text spanning enough bytes to cross the reverse-read chunking.
+    const bigId = "beefbeef-2222-3333-4444-555555555555";
+    const dir = join(projectsRoot, encodeProjectDir(workspaceRoot));
+    const lines: string[] = [line({ type: "ai-title", sessionId: bigId, aiTitle: "大会话 标题" })];
+    for (let i = 0; i < 40; i++) {
+      lines.push(
+        line({
+          type: "user",
+          uuid: `u${i}`,
+          sessionId: bigId,
+          cwd: workspaceRoot,
+          timestamp: `2026-06-11T00:${String(i).padStart(2, "0")}:01.000Z`,
+          message: { role: "user", content: [{ type: "text", text: `第 ${i} 条问题，包含中文与 emoji 🚀 用于跨字节边界` }] },
+        }),
+      );
+      if (i % 7 === 0) lines.push(line({ type: "queue-operation", operation: "enqueue", sessionId: bigId })); // meta noise
+      lines.push(
+        line({
+          type: "assistant",
+          uuid: `a${i}`,
+          sessionId: bigId,
+          timestamp: `2026-06-11T00:${String(i).padStart(2, "0")}:02.000Z`,
+          message: {
+            role: "assistant",
+            model: "claude-opus-4-8",
+            content: [
+              { type: "text", text: `回答 ${i}` },
+              { type: "tool_use", id: `tool_${i}`, name: "Bash", input: { command: `echo ${i}` } },
+            ],
+          },
+        }),
+      );
+      lines.push(
+        line({
+          type: "user",
+          uuid: `r${i}`,
+          sessionId: bigId,
+          message: { role: "user", content: [{ type: "tool_result", tool_use_id: `tool_${i}`, content: `out ${i}` }] },
+        }),
+      );
+    }
+    await fs.writeFile(join(dir, `${bigId}.jsonl`), lines.join(""));
+
+    const full = (await store.getSession(bigId))!; // whole-history (full-fold) path = ground truth
+    expect(full.messages.length).toBe(full.total);
+    expect(full.total).toBe(120); // 40 * (user + assistant + tool_result)
+
+    for (const k of [1, 5, 37, full.total, full.total + 10]) {
+      const page = (await store.getSession(bigId, { limit: k }))!;
+      const start = Math.max(0, full.total - k);
+      expect(page.total).toBe(full.total);
+      expect(page.cursor).toBe(full.cursor);
+      expect(page.offset).toBe(start);
+      expect(page.messages).toEqual(full.messages.slice(start)); // 逐条等价
+    }
+
+    // tail page + an earlier (before) page must stitch back to the full history with no gap/overlap
+    const tail = (await store.getSession(bigId, { limit: 30 }))!;
+    const earlier = (await store.getSession(bigId, { before: tail.offset, limit: 1000 }))!;
+    expect([...earlier.messages, ...tail.messages]).toEqual(full.messages);
+  });
+
+  it("tail path drops an in-progress (newline-less, unparseable) trailing line", async () => {
+    const dir = join(projectsRoot, encodeProjectDir(workspaceRoot));
+    // a complete session followed by a half-written final line (no trailing \n, invalid JSON)
+    await fs.writeFile(join(dir, `${SESSION_ID}.jsonl`), fixture(workspaceRoot) + '{"type":"assist');
+    const page = (await store.getSession(SESSION_ID, { limit: 10 }))!;
+    expect(page.total).toBe(3); // the partial line is not a message
+    expect(page.messages).toHaveLength(3);
+  });
+
   it("emits claude:message when a new line is appended", { timeout: 15000 }, async () => {
     const bus = new Bus();
     const got: ClaudeMessage[] = [];
