@@ -3,6 +3,16 @@
 import { useRef, useState } from "react";
 import type { ClaudeProject, ClaudeSession } from "@mac/shared";
 import { ProjectBar, projectStats } from "./ProjectBar";
+import { useAppStore, ideBadgeFor } from "../lib/store";
+
+/** Small "this session is a desktop VSCode/terminal session" chip for dashboard cards. */
+function IdeChip({ id }: { id: string }) {
+  const ide = useAppStore((s) => s.ideState);
+  const badge = ideBadgeFor(ide, id);
+  if (badge === "vscode") return <span className="shrink-0 rounded bg-info/15 px-1 text-[10px] font-medium text-info">VSCode</span>;
+  if (badge === "terminal") return <span className="shrink-0 rounded bg-warning/15 px-1 text-[10px] font-medium text-warning">终端</span>;
+  return null;
+}
 
 const RECENT_DONE_MS = 60 * 60 * 1000; // a "done" session newer than this is "awaiting next step"
 const RECENT_LIMIT = 5;
@@ -157,6 +167,7 @@ function AttentionCard({
             <div className="line-clamp-2 text-[14px] font-medium leading-snug text-ink">{cardTitle(s)}</div>
             <MetaLine>
               <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${a.badge}`}>{a.label}</span>
+              <IdeChip id={s.id} />
               <span className="truncate">{projName(s.cwd)}</span>
               <span className="shrink-0">· {relTime(s.updatedAt)}</span>
             </MetaLine>
@@ -177,6 +188,7 @@ function RunningRow({ s, onOpen }: { s: ClaudeSession; onOpen: (id: string) => v
         <div className="mt-0.5 truncate text-[11px] text-success">{s.lastActivity ? `正在 ${s.lastActivity}` : "思考中…"}</div>
         <MetaLine>
           <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-success" />
+          <IdeChip id={s.id} />
           <span className="truncate">{projName(s.cwd)}</span>
           <span className="shrink-0">· 消息 {s.messageCount}</span>
           <span className="shrink-0">· {relTime(s.updatedAt)}</span>
@@ -196,6 +208,7 @@ function DoneRow({ s, onOpen }: { s: ClaudeSession; onOpen: (id: string) => void
         <div className="line-clamp-2 text-[13px] font-medium leading-snug text-ink">{cardTitle(s)}</div>
         {s.lastResult && <div className="mt-0.5 truncate text-[11px] text-ink-dim">{s.lastResult}</div>}
         <MetaLine>
+          <IdeChip id={s.id} />
           <span className="truncate">{projName(s.cwd)}</span>
           <span className="shrink-0">· {relTime(s.updatedAt)}</span>
           {dur != null && <span className="shrink-0">· 耗时 {dur}m</span>}
