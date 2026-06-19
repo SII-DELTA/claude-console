@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import type { ClaudeMessage, ClaudeMessageBlock } from "@mac/shared";
 import { Markdown, OpenFileContext } from "./Markdown";
 import { ImageThumb } from "./ImageThumb";
@@ -31,7 +31,7 @@ type Item =
       isError?: boolean;
     };
 
-export function Timeline({
+export const Timeline = memo(function Timeline({
   messages,
   onFillInput,
   onOpenFile,
@@ -42,7 +42,9 @@ export function Timeline({
   /** Open a file referenced in the transcript (path-looking inline code → preview). */
   onOpenFile?: (path: string) => void;
 }) {
-  const groups = groupItems(buildTimeline(messages));
+  // Rebuild the timeline only when messages actually change — not on every parent re-render
+  // (e.g. each stream token), which would re-run this O(n) fold over the whole history.
+  const groups = useMemo(() => groupItems(buildTimeline(messages)), [messages]);
   const sendStatus = useAppStore((s) => s.sendStatus);
   return (
     <OpenFileContext.Provider value={onOpenFile ?? null}>
@@ -60,7 +62,7 @@ export function Timeline({
     </div>
     </OpenFileContext.Provider>
   );
-}
+});
 
 /** Delivery/read receipt shown under the last sent user bubble (方案 B). */
 function SendReceipt({ state }: { state: SendState }) {

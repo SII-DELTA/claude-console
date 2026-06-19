@@ -38,11 +38,19 @@ export function useUsage() {
     }
 
     fetchUsage();
-    timeoutId = setInterval(fetchUsage, FETCH_INTERVAL);
+    // Skip polling while the tab is hidden/locked; refetch immediately on resume.
+    timeoutId = setInterval(() => {
+      if (!document.hidden) void fetchUsage();
+    }, FETCH_INTERVAL);
+    const onVisible = () => {
+      if (!document.hidden) void fetchUsage();
+    };
+    document.addEventListener("visibilitychange", onVisible);
 
     return () => {
       isMounted = false;
       if (timeoutId) clearInterval(timeoutId);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [connection]);
 

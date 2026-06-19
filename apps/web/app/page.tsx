@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ClaudeProject } from "@mac/shared";
+import { useShallow } from "zustand/react/shallow";
 import { useAppStore, ideBadgeFor } from "../lib/store";
 import { ConnectForm } from "../components/ConnectForm";
 import { SessionList } from "../components/SessionList";
@@ -50,6 +51,8 @@ function Splash() {
 }
 
 function Console() {
+  // Subscribe with a shallow-compared slice so unrelated store writes (e.g. the per-token
+  // tail cursor / sync flags) don't re-render this large component — only these fields do.
   const {
     connection,
     projects,
@@ -94,7 +97,53 @@ function Console() {
     clearError,
     connectWs,
     ws,
-  } = useAppStore();
+  } = useAppStore(
+    useShallow((s) => ({
+      connection: s.connection,
+      projects: s.projects,
+      activeProjectDir: s.activeProjectDir,
+      switchProject: s.switchProject,
+      loadProjects: s.loadProjects,
+      restoreFromUrl: s.restoreFromUrl,
+      sessions: s.sessions,
+      allSessions: s.allSessions,
+      dashboardFocus: s.dashboardFocus,
+      setDashboardFocus: s.setDashboardFocus,
+      setSessionsFocus: s.setSessionsFocus,
+      loadAllSessions: s.loadAllSessions,
+      ideState: s.ideState,
+      sendToVscode: s.sendToVscode,
+      selectedId: s.selectedId,
+      messages: s.messages,
+      historyOffset: s.historyOffset,
+      loadingEarlier: s.loadingEarlier,
+      loadEarlier: s.loadEarlier,
+      stream: s.stream,
+      driveStatus: s.driveStatus,
+      lastUsage: s.lastUsage,
+      permissionMode: s.permissionMode,
+      setPermissionMode: s.setPermissionMode,
+      wsConnected: s.wsConnected,
+      error: s.error,
+      loadingDetail: s.loadingDetail,
+      mobileTab: s.mobileTab,
+      setMobileTab: s.setMobileTab,
+      selectSession: s.selectSession,
+      sendPrompt: s.sendPrompt,
+      interrupt: s.interrupt,
+      answerPermission: s.answerPermission,
+      answerToolApproval: s.answerToolApproval,
+      dismissQuestion: s.dismissQuestion,
+      closePermission: s.closePermission,
+      pendingPermission: s.pendingPermission,
+      toolApproval: s.toolApproval,
+      loadSessions: s.loadSessions,
+      setConnection: s.setConnection,
+      clearError: s.clearError,
+      connectWs: s.connectWs,
+      ws: s.ws,
+    })),
+  );
 
   // Mobile: a "new session" detail view opened with no session selected yet.
   const [composeNew, setComposeNew] = useState(false);
@@ -186,6 +235,7 @@ function Console() {
     // Slow cadence: the heavier dashboard list scans + a catch-all tail sync for the
     // open conversation (covers idle sessions). WS push is still the primary path.
     const slow = setInterval(() => {
+      if (document.hidden) return; // backgrounded/locked → don't burn battery+data; resume refetches
       void loadSessions();
       void loadAllSessions();
       useAppStore.getState().syncOpenSession();
@@ -195,6 +245,7 @@ function Console() {
     // a cheap byte-cursor tail read. Idle sessions stay on the slow cadence to save
     // battery / backend load. The syncTail in-flight guard dedupes overlaps with `slow`.
     const fast = setInterval(() => {
+      if (document.hidden) return; // paused while hidden; handleVisible resyncs the tail on resume
       const s = useAppStore.getState();
       const sel = s.sessions.find((x) => x.id === s.selectedId);
       if (sel && (sel.driving || sel.isLive)) s.syncOpenSession();
@@ -317,6 +368,10 @@ function Console() {
 
   // a file path clicked in the transcript → preview overlay (resolved against session cwd)
   const [previewFile, setPreviewFile] = useState<string | null>(null);
+
+  // Stable callbacks so <Timeline> (memo) doesn't re-render on every stream token.
+  const fillInput = useCallback((t: string) => setDraft((d) => ({ text: t, nonce: d.nonce + 1 })), []);
+  const openFile = useCallback((p: string) => setPreviewFile(p), []);
 
   return (
     <div className="flex h-screen overflow-hidden bg-bg text-ink flex-col md:flex-row">
@@ -471,11 +526,7 @@ function Console() {
                   </button>
                 </div>
               )}
-              <Timeline
-                messages={messages}
-                onFillInput={(t) => setDraft((d) => ({ text: t, nonce: d.nonce + 1 }))}
-                onOpenFile={(p) => setPreviewFile(p)}
-              />
+              <Timeline messages={messages} onFillInput={fillInput} onOpenFile={openFile} />
               {stream && (
                 <div className="mt-3">
                   <StreamingBubble
