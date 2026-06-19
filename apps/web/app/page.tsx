@@ -241,14 +241,21 @@ function Console() {
       useAppStore.getState().syncOpenSession();
       void useAppStore.getState().loadIdeState();
     }, 20000);
-    // Fast cadence: only the open conversation, and only while it's actively running —
-    // a cheap byte-cursor tail read. Idle sessions stay on the slow cadence to save
-    // battery / backend load. The syncTail in-flight guard dedupes overlaps with `slow`.
+    // Fast cadence: the open conversation, only while it's actively running — a cheap
+    // byte-cursor tail read. This is the ONLY delivery path that must survive backgrounding:
+    // the WS gets terminated by the server's heartbeat while the phone is backgrounded, so if
+    // we also stopped polling, a driven turn that finishes in the background would never reach
+    // the phone (stuck "streaming", no replies). So an *active* session keeps syncing even when
+    // hidden; idle sessions cost nothing (the guard below short-circuits). Look the session up
+    // cross-project (a takeover session may not be in the active-project `sessions` list), and
+    // trust the local streaming state too.
     const fast = setInterval(() => {
-      if (document.hidden) return; // paused while hidden; handleVisible resyncs the tail on resume
       const s = useAppStore.getState();
-      const sel = s.sessions.find((x) => x.id === s.selectedId);
-      if (sel && (sel.driving || sel.isLive)) s.syncOpenSession();
+      const sel =
+        s.sessions.find((x) => x.id === s.selectedId) ??
+        s.allSessions.find((x) => x.id === s.selectedId);
+      const active = s.driveStatus === "streaming" || !!(sel && (sel.driving || sel.isLive));
+      if (active) s.syncOpenSession();
     }, 4000);
     return () => {
       clearInterval(slow);
