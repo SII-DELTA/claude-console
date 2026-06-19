@@ -33,8 +33,19 @@
 
 - 仅前端;复用既有 store `sendToVscode`;Composer 失败返回 false 时由其既有逻辑恢复草稿。
 
+## 追加:桌面会话带图片的明示接管
+
+桌面注入是**纯文字**(模拟键盘),无法把图片递进桌面 Claude Code 会话;图片只能走手机
+agent 路径。原先"带图片静默回退 agent"易被误以为发送失败。改为:
+
+- 桌面可控会话 + 带图片发送时,弹**明确确认框**(`🖼 图片需经手机发送` / "将通过手机接管该
+  会话来发送图片"),确认后才走 `force` 接管发送。
+- 用基于 Promise 的确认:`handleSend` await 弹框结果。取消 → 返回 false → composer 既有逻辑
+  **恢复文字 + 图片**(不丢输入);确认 → 接管发送并清空。
+- `ConfirmTakeover` 参数化(可选 title/detail/confirmLabel,默认值不变),复用于此场景。
+
 ## 验证
 
 - web typecheck 干净、build 成功。
-- 逻辑:新建会话/手机驱动会话 → 纸飞机走 agent;会话在桌面 VSCode 存活 → 纸飞机注入桌面;
-  显式接管 → 走 resume。
+- 逻辑:新建会话/手机驱动会话 → 纸飞机走 agent;会话在桌面 VSCode 存活(纯文字)→ 纸飞机
+  注入桌面;桌面会话带图片 → 明示确认后接管发送;显式接管 → 走 resume。

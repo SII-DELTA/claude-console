@@ -339,7 +339,14 @@ function Console() {
     // Session is open in a desktop VSCode window and the user hasn't armed a takeover →
     // inject into that live desktop session (continues in the desktop window) instead of
     // taking it over with a phone-driven resume. The response streams back via tail sync.
-    if (desktopControllable && !takeoverArmed && selectedId && !images?.length) {
+    if (desktopControllable && !takeoverArmed && selectedId) {
+      if (images?.length) {
+        // Inject is text-only — images must go via a phone takeover. Confirm explicitly so it
+        // isn't a silent mode switch; cancel returns false so the composer keeps text + images.
+        const ok = await new Promise<boolean>((resolve) => setImgTakeover({ resolve }));
+        if (!ok) return false;
+        return await sendPrompt(text, { force: true, images });
+      }
       const r = await sendToVscode(selectedId, text);
       return !!r.ok; // false → composer restores the draft
     }
@@ -383,6 +390,9 @@ function Console() {
 
   // a file path clicked in the transcript → preview overlay (resolved against session cwd)
   const [previewFile, setPreviewFile] = useState<string | null>(null);
+  // Images can't be injected into a desktop VSCode session (text-only). When the user attaches
+  // one to a desktop session, confirm the switch to a phone-driven takeover before sending.
+  const [imgTakeover, setImgTakeover] = useState<null | { resolve: (ok: boolean) => void }>(null);
 
   // Stable callbacks so <Timeline> (memo) doesn't re-render on every stream token.
   const fillInput = useCallback((t: string) => setDraft((d) => ({ text: t, nonce: d.nonce + 1 })), []);
@@ -686,6 +696,23 @@ function Console() {
             setPendingPrompt(null);
             clearError();
             if (p) void sendPrompt(p, { force: true });
+          }}
+        />
+      )}
+      {/* Image-on-desktop-session: confirm the switch to a phone-driven takeover */}
+      {imgTakeover && (
+        <ConfirmTakeover
+          title="🖼 图片需经手机发送"
+          message="图片无法发送到桌面 VSCode 窗口（注入只能输入文字）。将通过手机接管该会话来发送图片。"
+          detail="接管会在该会话上另起一个进程续写，可能与桌面窗口正在进行的回合冲突。"
+          confirmLabel="接管并发送"
+          onConfirm={() => {
+            imgTakeover.resolve(true);
+            setImgTakeover(null);
+          }}
+          onCancel={() => {
+            imgTakeover.resolve(false);
+            setImgTakeover(null);
           }}
         />
       )}
@@ -1015,25 +1042,29 @@ function ConfirmTakeover({
   message,
   onConfirm,
   onCancel,
+  title = "⚠ 会话仍活跃",
+  detail = "强制接管会在该会话上另起一个进程，可能与终端里正在运行的进程冲突。",
+  confirmLabel = "强制接管",
 }: {
   message: string;
   onConfirm: () => void;
   onCancel: () => void;
+  title?: string;
+  detail?: string;
+  confirmLabel?: string;
 }) {
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 px-4">
       <div className="w-full max-w-sm rounded-2xl border border-line bg-bg-alt p-5">
-        <h3 className="text-base font-semibold text-warning">⚠ 会话仍活跃</h3>
+        <h3 className="text-base font-semibold text-warning">{title}</h3>
         <p className="mt-2 text-sm text-ink-dim">{message}</p>
-        <p className="mt-2 text-xs text-ink-faint">
-          强制接管会在该会话上另起一个进程，可能与终端里正在运行的进程冲突。
-        </p>
+        {detail && <p className="mt-2 text-xs text-ink-faint">{detail}</p>}
         <div className="mt-4 flex gap-2">
           <button onClick={onCancel} className="btn-ghost flex-1">
             取消
           </button>
           <button onClick={onConfirm} className="btn flex-1 !bg-warning hover:!bg-warning/80">
-            强制接管
+            {confirmLabel}
           </button>
         </div>
       </div>
