@@ -32,8 +32,9 @@ export function Composer({
   placeholder?: string;
   /** External text to drop into the input. Bump `nonce` to re-trigger even with the same text. */
   prefill?: { text: string; nonce: number };
-  /** when set, shows a "→VSCode" button that pushes the current text to the desktop session */
-  onSendToVscode?: (text: string) => void | Promise<void>;
+  /** when set, shows a "→VSCode" button that pushes the current text to the desktop session.
+   * Returns whether it succeeded so the draft can be restored on failure. */
+  onSendToVscode?: (text: string) => Promise<{ ok: boolean }> | void;
 }) {
   const [text, setText] = useState("");
   const [images, setImages] = useState<PickedImage[]>([]);
@@ -237,8 +238,10 @@ export function Composer({
       onClick={() => {
         const t = text.trim();
         if (!t || disabled) return;
-        void onSendToVscode(t);
         setText("");
+        void Promise.resolve(onSendToVscode(t)).then((r) => {
+          if (r && !r.ok) setText(t); // failed (e.g. no Accessibility perm) → restore the draft
+        });
       }}
       disabled={disabled || !text.trim()}
       className="btn-ghost shrink-0 !px-2 !py-2 text-ink-faint hover:text-accent disabled:opacity-40"

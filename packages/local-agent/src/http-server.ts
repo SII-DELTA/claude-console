@@ -606,21 +606,21 @@ export async function buildHttpApp(opts: BuildHttpOptions): Promise<FastifyInsta
     return readIdeState();
   });
 
-  app.post<{ Body: { sessionId?: string; cwd?: string; text?: string; send?: boolean } }>(
+  app.post<{ Body: { sessionId?: string; text?: string; send?: boolean } }>(
     "/ide/inject",
     async (req, reply) => {
-      const { sessionId, cwd, text, send } = req.body ?? {};
+      const { sessionId, text, send } = req.body ?? {};
       if (!sessionId || !text) {
         reply.code(400);
         return { error: "missing sessionId/text", code: ERROR_CODES.BAD_REQUEST };
       }
-      // only inject into a session we actually know (cwd resolvable) — no arbitrary control
-      const resolved = cwd ?? cwdOfSession(sessionId);
-      if (!resolved) {
+      // cwd is derived from the session id inside injectToSession (trusted) — the caller can't
+      // supply an arbitrary path. Reject sessions we don't know.
+      if (!cwdOfSession(sessionId)) {
         reply.code(404);
         return { error: "unknown_session", code: ERROR_CODES.NOT_FOUND };
       }
-      return injectToSession({ sessionId, cwd: resolved, text, send: !!send });
+      return injectToSession({ sessionId, text, send: !!send });
     },
   );
 
@@ -630,8 +630,14 @@ export async function buildHttpApp(opts: BuildHttpOptions): Promise<FastifyInsta
       reply.code(400);
       return { error: "missing cwd", code: ERROR_CODES.BAD_REQUEST };
     }
-    await openInVscode(cwd);
-    return { ok: true };
+    // only open a known Claude project dir — not an arbitrary host path
+    const known = await opts.claude.listProjects();
+    if (!known.some((p) => p.cwd === cwd)) {
+      reply.code(403);
+      return { error: "unknown_project", code: ERROR_CODES.BAD_REQUEST };
+    }
+    const ok = await openInVscode(cwd);
+    return { ok };
   });
 
   app.get("/devices", async () => {

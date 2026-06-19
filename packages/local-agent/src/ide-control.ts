@@ -87,6 +87,24 @@ function pidAlive(pid: number | null): boolean {
 const execFileP = (cmd: string, args: string[]): Promise<string> =>
   new Promise((res) => execFile(cmd, args, { timeout: 8000 }, (err, stdout) => res(err ? "" : stdout)));
 
+/** Run a command, reporting whether it actually succeeded (for honest ok/sent results). */
+const runCmd = (cmd: string, args: string[]): Promise<{ ok: boolean; out: string }> =>
+  new Promise((res) => execFile(cmd, args, { timeout: 8000 }, (err, stdout) => res({ ok: !err, out: stdout || "" })));
+
+const isMac = process.platform === "darwin";
+
+/** One read of a session's hook state → cwd + pid (avoids re-scanning the whole dir). */
+function sessionMeta(sessionId: string): { cwd: string | null; pid: number | null } {
+  const f = join(STATE_DIR, `${sessionId}.json`);
+  if (!existsSync(f)) return { cwd: null, pid: null };
+  try {
+    const d = JSON.parse(readFileSync(f, "utf8")) as { cwd?: string; pid?: number };
+    return { cwd: d.cwd ?? null, pid: d.pid ?? null };
+  } catch {
+    return { cwd: null, pid: null };
+  }
+}
+
 /** True if the pid is attached to a tty (interactive terminal), not a headless/webview proc. */
 async function pidHasTty(pid: number | null): Promise<boolean> {
   if (pid == null) return false;
@@ -128,8 +146,18 @@ export function cwdOfSession(sessionId: string): string | null {
   }
 }
 
-/** Aggregate detection for the console UI. */
+let ideCache: { at: number; val: IdeState } | null = null;
+
+/** Aggregate detection for the console UI. Cached briefly so a 20s multi-client poll doesn't
+ * run a full `ps` snapshot every call. */
 export async function readIdeState(): Promise<IdeState> {
+  if (ideCache && Date.now() - ideCache.at < 4000) return ideCache.val;
+  const val = await computeIdeState();
+  ideCache = { at: Date.now(), val };
+  return val;
+}
+
+async function computeIdeState(): Promise<IdeState> {
   const vscodeDirs = ideVscodeDirs();
   const plugins = injectEndpoints();
   const pluginDirs = new Set(plugins.flatMap((e) => e.workspaceFolders ?? []));
@@ -161,27 +189,30 @@ export async function readIdeState(): Promise<IdeState> {
   return { projects, sessions };
 }
 
-function osascript(script: string): Promise<string> {
-  return execFileP("osascript", ["-e", script]);
-}
-
 /** Focus a VSCode window by workspace (handles cross-Space; AppleScript can't). */
-async function focusWindow(cwd: string): Promise<void> {
-  await execFileP("code", [cwd]);
+async function focusWindow(cwd: string): Promise<boolean> {
+  const { ok } = await runCmd("code", [cwd]);
   await new Promise((r) => setTimeout(r, 900));
+  return ok;
 }
 
-/** Paste the clipboard into the focused input and optionally press Return. */
-async function pasteAndMaybeSend(text: string, send: boolean): Promise<void> {
-  // set clipboard via pbcopy (handles arbitrary unicode safely)
+/** Paste the clipboard into the focused input and optionally press Return. Reports success
+ * (osascript fails e.g. when Accessibility isn't granted → we must not claim it was sent). */
+async function pasteAndMaybeSend(text: string, send: boolean): Promise<boolean> {
+  // set clipboard via pbcopy (handles arbitrary unicode safely, never via shell/argv)
   await new Promise<void>((res) => {
     const p = execFile("pbcopy", [], () => res());
+    p.stdin?.on("error", () => res());
     p.stdin?.end(text);
   });
   const sendKey = send ? "\n  delay 0.25\n  key code 36" : "";
-  await osascript(
-    `tell application "System Events" to tell process "Code"\n  set frontmost to true\n  delay 0.3\n  keystroke "v" using {command down}${sendKey}\nend tell`,
-  );
+  // only act if Code is genuinely the frontmost app — avoids pasting/Entering into whatever
+  // window the user switched to during the (unavoidable) focus delay.
+  const { ok } = await runCmd("osascript", [
+    "-e",
+    `tell application "System Events"\n  set fp to name of first process whose frontmost is true\n  if fp is not "Code" then error "Code not frontmost"\n  tell process "Code"\n    delay 0.2\n    keystroke "v" using {command down}${sendKey}\n  end tell\nend tell`,
+  ]);
+  return ok;
 }
 
 function postPlugin(ep: InjectEndpoint, body: object): Promise<{ status: number; json: any }> {
@@ -219,20 +250,13 @@ export interface InjectResult {
   detail?: string;
 }
 
-/** Inject text into a session's running Claude Code, sending if requested. */
-export async function injectToSession(opts: {
-  sessionId: string;
-  cwd?: string;
-  text: string;
-  send: boolean;
-}): Promise<InjectResult> {
-  const cwd = opts.cwd ?? cwdOfSession(opts.sessionId);
+/** Inject text into a session's running Claude Code, sending if requested. The cwd is always
+ * derived from the (trusted) session id, never from the caller — no arbitrary-path control. */
+export async function injectToSession(opts: { sessionId: string; text: string; send: boolean }): Promise<InjectResult> {
+  if (!isMac) return { ok: false, via: "none", sent: false, detail: "桌面注入仅支持 macOS" };
+  const { cwd, pid } = sessionMeta(opts.sessionId);
   if (!cwd) return { ok: false, via: "none", sent: false, detail: "找不到会话的 cwd" };
-
-  const isTerminal = await pidHasTty(
-    (readJsonDir<{ sessionId?: string; pid?: number }>(STATE_DIR).find((s) => s.sessionId === opts.sessionId) || {})
-      .pid ?? null,
-  );
+  const isTerminal = await pidHasTty(pid);
 
   // 1) Plugin path (preferred): silent for terminals; webview opens a normal tab + prefill.
   const ep = endpointForCwd(cwd);
@@ -243,30 +267,35 @@ export async function injectToSession(opts: {
       send: opts.send,
       mode: isTerminal ? "terminal" : "auto",
     });
-    if (r.status === 200 && r.json?.applied) {
-      // webview can't submit programmatically → press Enter via osascript when sending
-      let sent = !!r.json.sent;
-      if (opts.send && r.json.needsEnter) {
+    // Any HTTP response (not status 0) means the plugin received the request and ran the
+    // command — trust its verdict and NEVER fall back, or we'd double-inject the prefill.
+    if (r.status !== 0) {
+      const applied = r.json?.applied === true;
+      let sent = !!r.json?.sent;
+      if (applied && opts.send && r.json?.needsEnter) {
         await new Promise((res) => setTimeout(res, 400));
-        await osascript(
-          `tell application "System Events" to tell process "Code"\n  set frontmost to true\n  delay 0.2\n  key code 36\nend tell`,
-        );
-        sent = true;
+        sent = (
+          await runCmd("osascript", [
+            "-e",
+            `tell application "System Events"\n  if (name of first process whose frontmost is true) is "Code" then key code 36\nend tell`,
+          ])
+        ).ok;
       }
-      return { ok: true, via: "plugin", sent, detail: r.json.via };
+      return { ok: applied, via: "plugin", sent, detail: r.json?.via ?? r.json?.error };
     }
-    // plugin reachable but failed → fall through to URI
+    // status 0 = plugin unreachable (didn't act) → safe to fall back to the URI path below.
   }
 
   // 2) URI fallback: focus window (cross-Space via `code`) → open exact session → paste (+Enter).
   await focusWindow(cwd);
-  await execFileP("open", [`vscode://anthropic.claude-code/open?session=${opts.sessionId}`]);
+  await execFileP("open", [`vscode://anthropic.claude-code/open?session=${encodeURIComponent(opts.sessionId)}`]);
   await new Promise((r) => setTimeout(r, 1100));
-  await pasteAndMaybeSend(opts.text, opts.send);
-  return { ok: true, via: "uri-fallback", sent: opts.send };
+  const ok = await pasteAndMaybeSend(opts.text, opts.send);
+  return { ok, via: "uri-fallback", sent: ok && opts.send };
 }
 
-/** Open a project folder in VSCode. */
-export async function openInVscode(cwd: string): Promise<void> {
-  await execFileP("code", [cwd]);
+/** Open a project folder in VSCode. Caller (route) must validate cwd is a known project. */
+export async function openInVscode(cwd: string): Promise<boolean> {
+  if (!isMac) return false;
+  return (await runCmd("code", [cwd])).ok;
 }

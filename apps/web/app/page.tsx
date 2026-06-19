@@ -594,7 +594,7 @@ function Console() {
           disabled={composerLocked}
           prefill={draft}
           onSendToVscode={
-            selectedId && selectedHasVscode ? (text) => void sendToVscode(selectedId, text) : undefined
+            selectedId && selectedHasVscode ? (text) => sendToVscode(selectedId, text) : undefined
           }
           placeholder={
             composerLocked
