@@ -263,6 +263,17 @@ export async function buildHttpApp(opts: BuildHttpOptions): Promise<FastifyInsta
         reply.code(404);
         return { error: "not_found", code: ERROR_CODES.NOT_FOUND };
       }
+      // cwd must be a known project (or under one) — the caller can't point `cwd` at an
+      // arbitrary host dir (e.g. /, ~/.ssh) to read files outside any project.
+      const known = await opts.claude.listProjects();
+      const inKnownProject = known.some((p) => {
+        const root = resolvePath(p.cwd);
+        return realBase === root || realBase.startsWith(root + sep);
+      });
+      if (!inKnownProject) {
+        reply.code(403);
+        return { error: "outside project", code: ERROR_CODES.BAD_REQUEST };
+      }
       if (realAbs !== realBase && !realAbs.startsWith(realBase + sep)) {
         reply.code(403);
         return { error: "outside project", code: ERROR_CODES.BAD_REQUEST };

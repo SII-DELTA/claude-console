@@ -143,12 +143,18 @@ export async function startAgent(config: AgentRuntimeConfig): Promise<AgentRunti
   // Set MAC_AGENT_PASSWORD to enforce password login (required before exposing
   // beyond loopback, e.g. over Tailscale).
   const noAuth = !password;
-  // Loud guard: exposing beyond loopback with no password = open shell/RCE on the LAN.
+  // Fail-closed: exposing beyond loopback with no password = open shell/RCE on the LAN.
+  // Refuse to start unless the operator explicitly accepts the risk via MAC_AGENT_ALLOW_OPEN=1.
   const loopback = host === "127.0.0.1" || host === "::1" || host === "localhost";
   if (noAuth && !loopback) {
-    console.warn(
-      `\n⚠️  [local-agent] 绑定到 ${host} 但未设置 MAC_AGENT_PASSWORD —— 任何能访问 ${host}:${port} 的人都可创建/控制会话(等同 RCE)。\n    请设置 MAC_AGENT_PASSWORD,或仅绑定 127.0.0.1(由 tailscale serve 前置)。\n`,
-    );
+    const allowOpen = process.env.MAC_AGENT_ALLOW_OPEN === "1";
+    const msg =
+      `[local-agent] 绑定到 ${host} 但未设置 MAC_AGENT_PASSWORD —— 任何能访问 ${host}:${port} 的人` +
+      `都可创建/控制会话(等同 RCE)。请设置 MAC_AGENT_PASSWORD,或仅绑定 127.0.0.1(由 tailscale serve 前置)。`;
+    if (!allowOpen) {
+      throw new Error(`${msg}\n如确需开放访问,显式设置 MAC_AGENT_ALLOW_OPEN=1 以确认风险。`);
+    }
+    console.warn(`\n⚠️  ${msg}\n    已通过 MAC_AGENT_ALLOW_OPEN=1 强制开放。\n`);
   }
 
   // Web Push: agent pushes "needs answer / done / error" to subscribed browsers so
