@@ -578,6 +578,15 @@ export class ClaudeStore {
     return file ? safeSize(file) : null;
   }
 
+  /** A session's working dir, resolved cross-project from its JSONL (cached meta). Lets desktop
+   * inject target an inactive/old session whose hook state file was already reaped. */
+  async cwdOfSession(id: string): Promise<string | null> {
+    const file = await this.resolveSessionFile(id);
+    if (!file) return null;
+    const meta = await this.readSessionMeta(file);
+    return meta?.cwd ?? null;
+  }
+
   async start(): Promise<void> {
     if (this.watcher) return;
     // Watch the WHOLE projects root (depth 1) so the dashboard's cross-project

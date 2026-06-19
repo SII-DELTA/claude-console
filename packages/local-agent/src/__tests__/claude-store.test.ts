@@ -257,6 +257,18 @@ describe("ClaudeStore", () => {
     expect(tail).not.toBeNull();
   });
 
+  it("cwdOfSession resolves cross-project from the JSONL (for desktop inject)", async () => {
+    expect(await store.cwdOfSession(SESSION_ID)).toBe(workspaceRoot);
+    // a session in another project (active dir is still workspaceRoot) still resolves
+    const otherCwd = "/Users/test/elsewhere2";
+    const otherId = "cccccccc-2222-3333-4444-555555555555";
+    const dir = join(projectsRoot, encodeProjectDir(otherCwd));
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(join(dir, `${otherId}.jsonl`), fixture(otherCwd).replaceAll(SESSION_ID, otherId));
+    expect(await store.cwdOfSession(otherId)).toBe(otherCwd);
+    expect(await store.cwdOfSession("99999999-0000-0000-0000-000000000000")).toBeNull();
+  });
+
   it("reads full session messages", async () => {
     const detail = await store.getSession(SESSION_ID);
     expect(detail).not.toBeNull();

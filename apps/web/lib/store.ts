@@ -180,6 +180,52 @@ export function setVscodeSendMode(m: VscodeSendMode): void {
   }
 }
 
+/** How a send to a session (whose project has a desktop VSCode window) is routed.
+ * "native" = inject into the desktop VSCode session; "takeover" = phone-driven resume;
+ * "auto" = the smart default (currently native for both categories). */
+export type DesktopRouteMode = "auto" | "native" | "takeover";
+/** Two session categories: "active" = currently live under VSCode (a tab/terminal); "inactive"
+ * = an existing session whose project has VSCode open but that isn't running on the desktop. */
+export type DesktopRouteCategory = "active" | "inactive";
+const DESKTOP_ROUTE_KEY: Record<DesktopRouteCategory, string> = {
+  active: "mac.desktopRoute.active",
+  inactive: "mac.desktopRoute.inactive",
+};
+export function getDesktopRoute(cat: DesktopRouteCategory): DesktopRouteMode {
+  if (typeof window === "undefined") return "auto";
+  try {
+    const v = window.localStorage.getItem(DESKTOP_ROUTE_KEY[cat]);
+    return v === "native" || v === "takeover" ? v : "auto";
+  } catch {
+    return "auto";
+  }
+}
+export function setDesktopRoute(cat: DesktopRouteCategory, m: DesktopRouteMode): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(DESKTOP_ROUTE_KEY[cat], m);
+  } catch {
+    /* storage unavailable */
+  }
+}
+/** Pure: does a category's configured mode resolve to a native desktop send? "auto" resolves to
+ * native for both categories (the chosen default); "takeover" forces the agent path. */
+export function desktopModeIsNative(mode: DesktopRouteMode): boolean {
+  return (mode === "auto" ? "native" : mode) === "native";
+}
+
+/** Resolve whether a (text, existing-session) send should route to the desktop VSCode session
+ * (native inject) vs the phone agent. New sessions and image sends are decided by the caller. */
+export function routeSendNative(opts: {
+  selectedId: string | null;
+  hasVscode: boolean;
+  ideState: IdeState | null;
+}): boolean {
+  if (!opts.selectedId || !opts.hasVscode) return false;
+  const active = ideBadgeFor(opts.ideState, opts.selectedId) !== null;
+  return desktopModeIsNative(getDesktopRoute(active ? "active" : "inactive"));
+}
+
 /** Delivery/read receipt for the just-sent user message (方案 B). */
 export type SendState = "sending" | "delivered" | "read" | "failed";
 

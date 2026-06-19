@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ClaudeProject } from "@mac/shared";
 import { useShallow } from "zustand/react/shallow";
-import { useAppStore, ideBadgeFor } from "../lib/store";
+import { useAppStore, ideBadgeFor, routeSendNative } from "../lib/store";
 import { ConnectForm } from "../components/ConnectForm";
 import { SessionList } from "../components/SessionList";
 import { Timeline } from "../components/Timeline";
@@ -284,17 +284,14 @@ function Console() {
   // Sending would fight that process for the same session file, so block it and
   // require an explicit takeover.
   const externalLive = !!selected?.isLive && !selected?.drivenByAgent && driveStatus !== "streaming";
-  // The selected session's project has a desktop VSCode window → the send button routes INTO
-  // that live desktop session (inject) instead of taking it over with a phone-driven resume.
+  // The selected session's project has a desktop VSCode window.
   const selectedHasVscode = !!ideState?.projects.find((p) => p.cwd === selected?.cwd)?.hasVscode;
-  // Only route to inject when THIS session is actually live on the desktop (a tab/terminal in
-  // that window) — not merely any session in a project that happens to have VSCode open. A
-  // phone-driven session keeps phone-driving even if a VSCode window exists for its project.
-  const desktopControllable =
-    !!selectedId && selectedHasVscode && ideBadgeFor(ideState, selectedId) !== null;
-  // External-live sessions normally lock the composer until an explicit takeover — but a
-  // desktop-controllable one stays open, because send routes to inject (no takeover needed).
-  const composerLocked = externalLive && !takeoverArmed && !desktopControllable;
+  // Whether this send routes INTO the desktop VSCode session (inject) vs the phone agent —
+  // decided by the per-category Settings (active / inactive session). Armed takeover overrides.
+  const routeNative = !takeoverArmed && routeSendNative({ selectedId, hasVscode: selectedHasVscode, ideState });
+  // External-live sessions normally lock the composer until an explicit takeover — but when the
+  // send routes to the desktop (inject) we keep it open (no takeover needed).
+  const composerLocked = externalLive && !takeoverArmed && !routeNative;
   // Show interrupt (not an input) whenever the open session is actively running a turn —
   // locally streaming, OR our agent is driving it (e.g. we switched away and back). Stops
   // a follow-up message from being queued onto a still-running turn.
@@ -336,10 +333,9 @@ function Console() {
       void answerPermission(answers);
       return true;
     }
-    // Session is open in a desktop VSCode window and the user hasn't armed a takeover →
-    // inject into that live desktop session (continues in the desktop window) instead of
-    // taking it over with a phone-driven resume. The response streams back via tail sync.
-    if (desktopControllable && !takeoverArmed && selectedId) {
+    // Routed to the desktop VSCode session (per Settings) → inject there instead of taking it
+    // over with a phone-driven resume. The response streams back via tail sync.
+    if (routeNative && selectedId) {
       if (images?.length) {
         // Inject is text-only — images must go via a phone takeover. Confirm explicitly so it
         // isn't a silent mode switch; cancel returns false so the composer keeps text + images.
@@ -348,7 +344,8 @@ function Console() {
         return await sendPrompt(text, { force: true, images });
       }
       const r = await sendToVscode(selectedId, text);
-      return !!r.ok; // false → composer restores the draft
+      if (!r.ok) useAppStore.getState().setError("发到桌面 VSCode 会话失败 — 可在设置改为「接管」或重试");
+      return !!r.ok; // false → composer restores the draft (no silent takeover)
     }
     // when armed (or taking over external-live), force the resume
     return await sendPrompt(text, { force: externalLive || undefined, images });
@@ -674,7 +671,7 @@ function Console() {
               ? "运行中·先接管…"
               : takeoverArmed
                 ? "接管并续写…"
-                : desktopControllable
+                : routeNative
                   ? "发送到桌面 VSCode 会话…"
                   : selectedId
                     ? "续写会话…"

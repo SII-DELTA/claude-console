@@ -655,13 +655,15 @@ export async function buildHttpApp(opts: BuildHttpOptions): Promise<FastifyInsta
         reply.code(400);
         return { error: "missing sessionId/text", code: ERROR_CODES.BAD_REQUEST };
       }
-      // cwd is derived from the session id inside injectToSession (trusted) — the caller can't
-      // supply an arbitrary path. Reject sessions we don't know.
-      if (!cwdOfSession(sessionId)) {
+      // cwd is resolved server-side from the session id (never the caller): hook state first
+      // (active sessions), else the session's JSONL location (inactive/old sessions whose state
+      // file was reaped). Reject sessions we can't resolve.
+      const cwd = cwdOfSession(sessionId) ?? (await opts.claude.cwdOfSession(sessionId));
+      if (!cwd) {
         reply.code(404);
         return { error: "unknown_session", code: ERROR_CODES.NOT_FOUND };
       }
-      return injectToSession({ sessionId, text, send: !!send });
+      return injectToSession({ sessionId, text, send: !!send, cwd });
     },
   );
 

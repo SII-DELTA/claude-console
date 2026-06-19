@@ -2,7 +2,16 @@
 
 import { useEffect, useState } from "react";
 import type { ClaudePermissionMode } from "@mac/shared";
-import { useAppStore, getVscodeSendMode, setVscodeSendMode, type EnterBehavior, type VscodeSendMode } from "../lib/store";
+import {
+  useAppStore,
+  getVscodeSendMode,
+  setVscodeSendMode,
+  getDesktopRoute,
+  setDesktopRoute,
+  type EnterBehavior,
+  type VscodeSendMode,
+  type DesktopRouteMode,
+} from "../lib/store";
 import { getInAppNotify, setInAppNotify } from "../lib/notify";
 import { disablePush, enablePush, getCachedPushStatus, getPushStatus, isIosNonStandalone, isPushSupported, type PushStatus } from "../lib/push";
 import { collectNotifyDiagnostics, diagnosticsEqual, getCachedDiagnostics, sendTestNotification, type NotifyDiagnostics } from "../lib/notify-diagnostics";
@@ -263,19 +272,82 @@ function DiagRow({ label, value, ok }: { label: string; value: string; ok?: bool
 function VscodeSection() {
   const ideState = useAppStore((s) => s.ideState);
   const [mode, setMode] = useState<VscodeSendMode>("auto");
-  useEffect(() => setMode(getVscodeSendMode()), []);
+  const [routeActive, setRouteActive] = useState<DesktopRouteMode>("auto");
+  const [routeInactive, setRouteInactive] = useState<DesktopRouteMode>("auto");
+  useEffect(() => {
+    setMode(getVscodeSendMode());
+    setRouteActive(getDesktopRoute("active"));
+    setRouteInactive(getDesktopRoute("inactive"));
+  }, []);
   const opts: { v: VscodeSendMode; label: string; hint: string }[] = [
     { v: "auto", label: "自动发送", hint: "注入并回车(会切窗口)" },
     { v: "stage", label: "暂存", hint: "只填入，你到电脑按回车" },
   ];
+  const routeOpts: { v: DesktopRouteMode; label: string }[] = [
+    { v: "auto", label: "自动" },
+    { v: "native", label: "原生" },
+    { v: "takeover", label: "接管" },
+  ];
   const projCount = ideState?.projects.filter((p) => p.hasVscode).length ?? 0;
   const pluginCount = ideState?.projects.filter((p) => p.hasPlugin).length ?? 0;
+  const RouteRow = ({
+    title,
+    hint,
+    value,
+    onPick,
+  }: {
+    title: string;
+    hint: string;
+    value: DesktopRouteMode;
+    onPick: (m: DesktopRouteMode) => void;
+  }) => (
+    <div>
+      <div className="text-[13px] text-ink">{title}</div>
+      <div className="mt-1.5 flex gap-1.5">
+        {routeOpts.map((o) => (
+          <button
+            key={o.v}
+            onClick={() => onPick(o.v)}
+            className={`flex-1 rounded-lg border px-2 py-1.5 text-[12px] transition-colors ${
+              o.v === value ? "border-accent bg-accent/15 text-accent" : "border-line text-ink-dim hover:bg-bg-raised"
+            }`}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+      <p className="mt-1 text-[11px] text-ink-faint">{hint}</p>
+    </div>
+  );
   return (
     <section className="mb-5">
-      <h2 className="mb-2 text-[12px] font-semibold text-ink-dim">发到 VSCode</h2>
+      <h2 className="mb-2 text-[12px] font-semibold text-ink-dim">桌面 VSCode 发送</h2>
       <div className="space-y-3 rounded-xl border border-line bg-bg-alt p-3">
-        <div>
-          <div className="text-[13px] text-ink">发送方式</div>
+        <div className="text-[11px] text-ink-faint">
+          当会话所在项目正开着桌面 VSCode 时,发送按钮按下面设置选择:<b>原生</b>=注入到桌面 VSCode
+          会话续写;<b>接管</b>=手机另起进程 resume;<b>自动</b>=都优先注入桌面。新会话始终走手机;
+          图片无法注入,会提示改为接管。
+        </div>
+        <RouteRow
+          title="已在桌面活跃的会话"
+          hint="该会话此刻正运行在桌面 VSCode/终端中"
+          value={routeActive}
+          onPick={(m) => {
+            setDesktopRoute("active", m);
+            setRouteActive(m);
+          }}
+        />
+        <RouteRow
+          title="未活跃的旧会话"
+          hint="项目开着 VSCode、但该会话当前未在桌面运行(原生会在桌面打开它并发送)"
+          value={routeInactive}
+          onPick={(m) => {
+            setDesktopRoute("inactive", m);
+            setRouteInactive(m);
+          }}
+        />
+        <div className="border-t border-line/60 pt-3">
+          <div className="text-[13px] text-ink">原生注入方式</div>
           <div className="mt-1.5 flex gap-1.5">
             {opts.map((o) => (
               <button
@@ -296,7 +368,6 @@ function VscodeSection() {
         </div>
         <div className="text-[11px] text-ink-faint">
           桌面 VSCode:{projCount} 个项目在跑{pluginCount > 0 ? `，${pluginCount} 个已装注入插件(静默/正常 tab)` : "（未检测到插件，走 URI 回退）"}。
-          会话输入框旁的 →VSCode 按钮把当前文本发到桌面对应会话。
         </div>
       </div>
     </section>

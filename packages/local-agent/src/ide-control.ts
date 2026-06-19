@@ -267,9 +267,17 @@ export interface InjectResult {
 
 /** Inject text into a session's running Claude Code, sending if requested. The cwd is always
  * derived from the (trusted) session id, never from the caller — no arbitrary-path control. */
-export async function injectToSession(opts: { sessionId: string; text: string; send: boolean }): Promise<InjectResult> {
+export async function injectToSession(opts: {
+  sessionId: string;
+  text: string;
+  send: boolean;
+  /** cwd resolved server-side by the route (hook state or JSONL location) — never the caller. */
+  cwd?: string;
+}): Promise<InjectResult> {
   if (!isMac) return { ok: false, via: "none", sent: false, detail: "桌面注入仅支持 macOS" };
-  const { cwd, pid } = sessionMeta(opts.sessionId);
+  const meta = sessionMeta(opts.sessionId);
+  const cwd = opts.cwd ?? meta.cwd;
+  const pid = meta.pid;
   if (!cwd) return { ok: false, via: "none", sent: false, detail: "找不到会话的 cwd" };
   const isTerminal = await pidHasTty(pid);
 
