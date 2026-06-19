@@ -121,6 +121,14 @@ export class ClaudeDriver {
     return this.opts.idleTimeoutMs ?? IDLE_TIMEOUT_MS;
   }
 
+  /** Concise lifecycle log so an intermittent "session stopped after takeover" is diagnosable
+   * from .logs/local-agent.log (spawn / turn-start / turn-done / exit / reap / kill). */
+  private log(sessionId: string, event: string, detail = ""): void {
+    const ts = new Date(now()).toISOString();
+    // eslint-disable-next-line no-console
+    console.log(`[driver] ${ts} ${sessionId.slice(0, 8)} ${event}${detail ? " " + detail : ""}`);
+  }
+
   private get interactivePermissions(): boolean {
     if (this.opts.interactivePermissions !== undefined) return this.opts.interactivePermissions;
     const env = process.env.CLAUDE_INTERACTIVE_PERMISSIONS;
@@ -155,7 +163,7 @@ export class ClaudeDriver {
     const wantMode = this.resolveMode(mode);
     const warm = this.procs.get(sessionId);
     // a warm process spawned with a different permission mode must respawn
-    if (warm && warm.mode !== wantMode) this.kill(sessionId);
+    if (warm && warm.mode !== wantMode) this.kill(sessionId, `mode-switch ${warm.mode}->${wantMode}`);
     // warm path: write to the live process. If it was just reaped (idle race),
     // write() returns false and we fall through to a cold resume.
     else if (warm && this.write(sessionId, prompt, images)) {
@@ -195,7 +203,7 @@ export class ClaudeDriver {
     // explicit abandon ⇒ drop any durable pending asks (don't resurface later)
     this.opts.pendingStore?.deletePendingPermissionsBySession(sessionId);
     const w = this.procs.get(sessionId);
-    if (w) this.kill(sessionId);
+    if (w) this.kill(sessionId, "interrupt");
     // rows were dropped above → re-derive so any "approval" badge clears now
     void this.opts.store.refreshSession(sessionId);
     return !!w;
@@ -252,6 +260,7 @@ export class ClaudeDriver {
       pending: new Map(),
     };
     this.procs.set(sessionId, w);
+    this.log(sessionId, "spawn", `pid=${proc.pid ?? "?"} mode=${resolved}`);
     // Hand the control protocol an initialize so the CLI routes permission asks to
     // us as `can_use_tool` control_requests. stdin is buffered, so this safely
     // precedes the first prompt regardless of ordering.
@@ -276,6 +285,7 @@ export class ClaudeDriver {
       w.stderr += c.toString();
     });
     proc.on("error", (err) => {
+      this.log(sessionId, "proc-error", err.message);
       this.setBusy(sessionId, false); // turn died → clear "running"
       this.clearPending(sessionId);
       this.procs.delete(sessionId);
@@ -284,6 +294,7 @@ export class ClaudeDriver {
     });
     proc.on("close", (code) => {
       const wasBusy = w.busy;
+      this.log(sessionId, "exit", `code=${code} wasBusy=${wasBusy}${wasBusy && code !== 0 ? " stderr=" + w.stderr.trim().slice(-200) : ""}`);
       this.setBusy(sessionId, false); // turn ended (crash/exit) → clear "running"
       this.clearPending(sessionId);
       const existed = this.procs.delete(sessionId);
@@ -302,6 +313,7 @@ export class ClaudeDriver {
     const w = this.procs.get(sessionId);
     if (!w || w.proc.stdin.destroyed) return false;
     this.setBusy(sessionId, true); // authoritative "a turn started"
+    this.log(sessionId, "turn-start");
     this.touch(sessionId);
     const content: unknown[] = [];
     for (const img of images ?? []) {
@@ -345,6 +357,7 @@ export class ClaudeDriver {
           const w = this.procs.get(sessionId);
           if (w) w.resumeAnswers = undefined; // drop any unconsumed recovery answer
           this.setBusy(sessionId, false); // authoritative "the turn finished"
+          this.log(sessionId, "turn-done", ev.isError ? "error" : "ok");
           // turn finished ⇒ no question can still be pending; clear durable rows
           this.opts.pendingStore?.deletePendingPermissionsBySession(sessionId);
           this.touch(sessionId); // keep warm; arm idle timer
@@ -719,15 +732,17 @@ export class ClaudeDriver {
     const w = this.procs.get(sessionId);
     if (!w) return;
     if (w.busy) {
+      this.log(sessionId, "reap-deferred", "busy (active turn)");
       this.touch(sessionId); // active turn → defer reaping
       return;
     }
-    this.kill(sessionId);
+    this.kill(sessionId, `reap-idle ${Math.round(this.idleMs / 1000)}s`);
   }
 
-  private kill(sessionId: string): void {
+  private kill(sessionId: string, reason = "kill"): void {
     const w = this.procs.get(sessionId);
     if (!w) return;
+    this.log(sessionId, "kill", `${reason} busy=${w.busy} pid=${w.proc.pid ?? "?"}`);
     if (w.idle) clearTimeout(w.idle);
     this.clearPending(sessionId);
     this.procs.delete(sessionId);
@@ -744,7 +759,7 @@ export class ClaudeDriver {
   }
 
   destroyAll(): void {
-    for (const id of [...this.procs.keys()]) this.kill(id);
+    for (const id of [...this.procs.keys()]) this.kill(id, "shutdown");
   }
 }
 
