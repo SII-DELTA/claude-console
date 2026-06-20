@@ -44,6 +44,9 @@ export class ClaudeStore {
    * re-parse hundreds of MB of unchanged JSONL on every poll (the /claude/sessions
    * timeout). Bounded; the runtime-/time-dependent fields are recomputed each call. */
   private metaCache = new Map<string, { mtimeMs: number; size: number; acc: SessionAccumulator }>();
+  /** Per-file byte offsets of each message line, for O(page) "load earlier" pagination without
+   * re-folding the whole JSONL. Extended incrementally on append; rebuilt on truncate. */
+  private msgIndexCache = new Map<string, { mtimeMs: number; size: number; index: number[]; scannedBytes: number }>();
   /** explicit active project dir override (set when the user switches project) */
   private activeDir: string | null = null;
   /** id → resolved jsonl path cache, so cross-project lookups don't rescan every call */
@@ -365,18 +368,34 @@ export class ClaudeStore {
       return { session, messages, total, offset: Math.max(0, total - messages.length), cursor };
     }
 
-    // Whole-history / load-earlier path: fold the full file (back-compat for internal callers
-    // and the `before` page — infrequent).
+    // "Load earlier" path (before set): page via the cached offset index so we read only the
+    // requested byte range, not the whole file. Meta (total/cursor) from the cheap cached path.
+    if (opts?.before != null) {
+      const session = await this.readSessionMeta(file);
+      if (!session) return null;
+      const index = await this.getMessageIndex(file);
+      const total = index.length; // == messageCount; authoritative for slicing
+      if (total !== session.messageCount) {
+        console.warn(`[claude-store] message index/count 不一致 ${file}: ${total} vs ${session.messageCount}`);
+      }
+      const end = Math.max(0, Math.min(opts.before, total));
+      const limit = limitOnly ?? total;
+      const start = Math.max(0, end - limit);
+      const messages = await this.readMessagesByIndex(file, index, start, end);
+      const cursor = (await safeSize(file)) ?? 0;
+      return { session, messages, total, offset: start, cursor };
+    }
+
+    // Whole-history path (no limit, no before): fold the full file — back-compat for internal
+    // callers (e.g. the driver) that want the entire transcript.
     const { acc, consumedOffset } = await this.foldFile(file, true);
     const session = this.buildSession(id, file, acc, await safeMtimeMs(file));
     if (!session) return null;
     const all = acc.messages;
     const total = all.length;
-    // before: absolute index; return the page ending just before it.
-    const end = opts?.before != null ? Math.max(0, Math.min(opts.before, total)) : total;
     const limit = opts?.limit != null && opts.limit > 0 ? opts.limit : total;
-    const start = Math.max(0, end - limit);
-    return { session, messages: all.slice(start, end), total, offset: start, cursor: consumedOffset };
+    const start = Math.max(0, total - limit);
+    return { session, messages: all.slice(start, total), total, offset: start, cursor: consumedOffset };
   }
 
   /** Read just the last `n` messages by scanning the file backwards in chunks at the byte level
@@ -433,6 +452,61 @@ export class ClaudeStore {
     } finally {
       await handle.close();
     }
+  }
+
+  /** Byte offset of every message line in the file, cached (mtime+size) and extended on append,
+   * so "load earlier" pages read only their byte range instead of re-folding the whole JSONL. */
+  private async getMessageIndex(file: string): Promise<number[]> {
+    const [mtimeMs, size] = await Promise.all([safeMtimeMs(file), safeSize(file)]);
+    if (size == null) return [];
+    const cached = this.msgIndexCache.get(file);
+    if (cached && cached.size === size && cached.mtimeMs === (mtimeMs ?? cached.mtimeMs)) {
+      return cached.index; // exact hit
+    }
+    // Extend from the last scan on append; rebuild on truncate/rewrite (size shrank or no cache).
+    const canExtend = cached != null && size > cached.size && size >= cached.scannedBytes;
+    const index = canExtend ? cached.index : [];
+    const from = canExtend ? cached.scannedBytes : 0;
+
+    let scannedBytes = from;
+    if (size > from) {
+      const buf = await readRangeBytes(file, from, size); // [from, size) at byte level
+      let searchStart = 0;
+      let nl: number;
+      while ((nl = buf.indexOf(0x0a, searchStart)) >= 0) {
+        const parsed = parseLine(buf.toString("utf8", searchStart, nl));
+        if (parsed?.message) index.push(from + searchStart); // global start byte of this message line
+        searchStart = nl + 1;
+      }
+      scannedBytes = from + searchStart; // start of the trailing incomplete line (not counted yet)
+    }
+    this.msgIndexCache.set(file, { mtimeMs: mtimeMs ?? 0, size, index, scannedBytes });
+    if (this.msgIndexCache.size > 200) {
+      const oldest = this.msgIndexCache.keys().next().value;
+      if (oldest !== undefined) this.msgIndexCache.delete(oldest);
+    }
+    return index;
+  }
+
+  /** Read messages [start, end) via the offset index — only that byte range is read + parsed. */
+  private async readMessagesByIndex(
+    file: string,
+    index: number[],
+    start: number,
+    end: number,
+  ): Promise<ClaudeMessage[]> {
+    if (start >= end || start >= index.length) return [];
+    const size = (await safeSize(file)) ?? 0;
+    const byteStart = index[start]!;
+    const byteEnd = end < index.length ? index[end]! : size; // index[end] = start of the first excluded msg
+    if (byteEnd <= byteStart) return [];
+    const chunk = await readRange(file, byteStart, byteEnd); // line-aligned range → whole lines
+    const out: ClaudeMessage[] = [];
+    for (const line of chunk.split("\n")) {
+      const parsed = parseLine(line);
+      if (parsed?.message) out.push(parsed.message);
+    }
+    return out.slice(0, end - start); // defensive: never exceed the requested window
   }
 
   /**
@@ -705,21 +779,25 @@ async function safeSize(file: string): Promise<number | null> {
   }
 }
 
-async function readRange(file: string, start: number, end: number): Promise<string> {
+async function readRangeBytes(file: string, start: number, end: number): Promise<Buffer> {
   const handle = await fs.open(file, "r");
   try {
-    const len = end - start;
+    const len = Math.max(0, end - start);
     const buf = Buffer.alloc(len);
-    // fs.read may return short — loop until the range is filled or EOF, and decode only
-    // the bytes actually read (a single read() leaves zero-padding → NUL bytes in JSON).
+    // fs.read may return short — loop until the range is filled or EOF.
     let off = 0;
     while (off < len) {
       const { bytesRead } = await handle.read(buf, off, len - off, start + off);
       if (bytesRead === 0) break; // EOF
       off += bytesRead;
     }
-    return buf.subarray(0, off).toString("utf8");
+    return buf.subarray(0, off);
   } finally {
     await handle.close();
   }
+}
+
+async function readRange(file: string, start: number, end: number): Promise<string> {
+  // Decode the byte range as utf8 — callers pass line-aligned [start,end) so no multibyte split.
+  return (await readRangeBytes(file, start, end)).toString("utf8");
 }

@@ -385,6 +385,55 @@ describe("ClaudeStore", () => {
     expect([...earlier.messages, ...tail.messages]).toEqual(full.messages);
   });
 
+  it("before-pagination (offset index) equals full-fold slice, incl. incremental append", async () => {
+    const id = "cafe0001-2222-3333-4444-555555555555";
+    const dir = join(projectsRoot, encodeProjectDir(workspaceRoot));
+    const mkLines = (n0: number, n1: number) => {
+      const out: string[] = [];
+      for (let i = n0; i < n1; i++) {
+        out.push(
+          line({ type: "user", uuid: `u${i}`, sessionId: id, cwd: workspaceRoot, timestamp: `2026-06-11T00:${String(i).padStart(2, "0")}:01.000Z`, message: { role: "user", content: [{ type: "text", text: `问题 ${i} 含中文🚀` }] } }),
+        );
+        if (i % 5 === 0) out.push(line({ type: "queue-operation", operation: "enqueue", sessionId: id })); // meta noise
+        out.push(
+          line({ type: "assistant", uuid: `a${i}`, sessionId: id, timestamp: `2026-06-11T00:${String(i).padStart(2, "0")}:02.000Z`, message: { role: "assistant", model: "claude-opus-4-8", content: [{ type: "text", text: `答 ${i}` }, { type: "tool_use", id: `t${i}`, name: "Bash", input: { command: `echo ${i}` } }] } }),
+        );
+        out.push(line({ type: "user", uuid: `r${i}`, sessionId: id, message: { role: "user", content: [{ type: "tool_result", tool_use_id: `t${i}`, content: `out ${i}` }] } }));
+      }
+      return out.join("");
+    };
+    await fs.writeFile(join(dir, `${id}.jsonl`), mkLines(0, 25));
+
+    const full = (await store.getSession(id))!;
+    const total = full.total;
+    for (const [before, limit] of [[total, 7], [20, 10], [5, 10], [3, 0], [total, total + 5]] as const) {
+      const page = (await store.getSession(id, { before, limit: limit || undefined }))!;
+      const end = Math.max(0, Math.min(before, total));
+      const start = Math.max(0, end - (limit || total));
+      expect(page.offset).toBe(start);
+      expect(page.total).toBe(total);
+      expect(page.messages).toEqual(full.messages.slice(start, end)); // 逐条等价
+    }
+
+    // multi-page backward scroll must stitch back to the whole history
+    const pages: ClaudeMessage[] = [];
+    let before = total;
+    while (before > 0) {
+      const p = (await store.getSession(id, { before, limit: 8 }))!;
+      pages.unshift(...p.messages);
+      before = p.offset;
+    }
+    expect(pages).toEqual(full.messages);
+
+    // append more turns → index extends incrementally → pagination still equals full slice
+    await fs.appendFile(join(dir, `${id}.jsonl`), mkLines(25, 30));
+    const full2 = (await store.getSession(id))!;
+    expect(full2.total).toBeGreaterThan(total);
+    const mid = (await store.getSession(id, { before: full2.total - 3, limit: 12 }))!;
+    const e = full2.total - 3;
+    expect(mid.messages).toEqual(full2.messages.slice(Math.max(0, e - 12), e));
+  });
+
   it("tail path drops an in-progress (newline-less, unparseable) trailing line", async () => {
     const dir = join(projectsRoot, encodeProjectDir(workspaceRoot));
     // a complete session followed by a half-written final line (no trailing \n, invalid JSON)
