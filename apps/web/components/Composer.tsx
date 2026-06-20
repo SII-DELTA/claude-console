@@ -272,13 +272,20 @@ export function Composer({
     </button>
   );
 
-  const SendOrStop = streaming ? (
+  const sendArrow = (
+    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <line x1="12" y1="20" x2="12" y2="5" />
+      <polyline points="6 11 12 5 18 11" />
+    </svg>
+  );
+  const StopBtn = (
     <button onClick={onInterrupt} className="btn-ghost shrink-0 !px-2.5 !py-2 text-danger" title="中断" aria-label="中断">
       <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
         <rect x="6" y="6" width="12" height="12" rx="2" />
       </svg>
     </button>
-  ) : (
+  );
+  const SendBtn = (
     <button
       onClick={submit}
       disabled={disabled || (!text.trim() && images.length === 0)}
@@ -286,11 +293,30 @@ export function Composer({
       title="发送"
       aria-label="发送"
     >
-      <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <line x1="12" y1="20" x2="12" y2="5" />
-        <polyline points="6 11 12 5 18 11" />
-      </svg>
+      {sendArrow}
     </button>
+  );
+  // While a turn is running you can still type a follow-up — the send button becomes a "queue"
+  // button (ghost), and the message is sent automatically after the current turn finishes. The
+  // interrupt (stop) button stays available.
+  const QueueBtn = (
+    <button
+      onClick={submit}
+      disabled={disabled || (!text.trim() && images.length === 0)}
+      className="btn-ghost shrink-0 !px-2.5 !py-2 text-accent disabled:opacity-40"
+      title="排队发送（当前回合结束后自动发送）"
+      aria-label="排队发送"
+    >
+      {sendArrow}
+    </button>
+  );
+  const SendOrStop = streaming ? (
+    <div className="flex shrink-0 items-center gap-1.5">
+      {(text.trim() || images.length > 0) && QueueBtn}
+      {StopBtn}
+    </div>
+  ) : (
+    SendBtn
   );
 
   return (

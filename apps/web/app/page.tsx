@@ -154,6 +154,9 @@ function Console() {
   const attentionCount = sessions.filter((s) => s.attention === "question" || s.attention === "error").length;
   const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
   const [takeoverArmed, setTakeoverArmed] = useState(false);
+  // A follow-up typed while the current turn is still running — held locally and auto-sent
+  // (via the normal send path) once the turn finishes, so it doesn't fight the stream machine.
+  const [queued, setQueued] = useState<{ text: string; images?: import("@mac/shared").ClaudeImage[] } | null>(null);
   const [atBottom, setAtBottom] = useState(true);
   const [hasNew, setHasNew] = useState(false);
   // Text dropped into the composer from a timeline message (not auto-sent). Bump nonce to re-trigger.
@@ -197,6 +200,8 @@ function Console() {
 
   // reset the takeover arm whenever the selected session changes
   useEffect(() => setTakeoverArmed(false), [selectedId]);
+  // a queued follow-up belongs to the session it was typed in → drop it on switch
+  useEffect(() => setQueued(null), [selectedId]);
 
   // connect the WS on mount when restoring a persisted connection
   useEffect(() => {
@@ -303,6 +308,14 @@ function Console() {
   // locally streaming, OR our agent is driving it (e.g. we switched away and back). Stops
   // a follow-up message from being queued onto a still-running turn.
   const sessionBusy = driveStatus === "streaming" || (!!selected?.driving && !!selected?.drivenByAgent);
+  // auto-send the queued follow-up once the current turn finishes (via the normal send path)
+  useEffect(() => {
+    if (sessionBusy || !queued) return;
+    const q = queued;
+    setQueued(null);
+    void sendPrompt(q.text, { images: q.images });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionBusy]);
   // 方案 B: an AskUserQuestion intercepted live via the control protocol (shows
   // even while the turn is "streaming" — the turn is paused awaiting the answer).
   const bPermission =
@@ -339,6 +352,12 @@ function Console() {
       for (const q of bPermission.questions) answers[q.question] = q.multiSelect ? [text] : text;
       void answerPermission(answers);
       return true;
+    }
+    // A turn is still running → queue the follow-up locally and auto-send it when the turn
+    // finishes (see the effect below), instead of writing onto a live turn.
+    if (sessionBusy && selectedId) {
+      setQueued({ text, images });
+      return true; // composer clears; the chip shows what's queued
     }
     // Routed to the desktop VSCode session (per Settings) → inject there instead of taking it
     // over with a phone-driven resume. The response streams back via tail sync.
@@ -667,6 +686,15 @@ function Console() {
           </div>
         )}
 
+        {queued && (
+          <div className="mx-auto mb-1.5 flex max-w-3xl items-center gap-2 rounded-xl border border-accent/40 bg-accent/10 px-3 py-1.5 text-[12px] text-accent">
+            <span className="shrink-0">⏳ 已排队</span>
+            <span className="min-w-0 flex-1 truncate text-ink-dim">{queued.text}</span>
+            <button onClick={() => setQueued(null)} className="shrink-0 text-accent/70 hover:text-accent" aria-label="取消排队">
+              ✕
+            </button>
+          </div>
+        )}
         <Composer
           onSend={handleSend}
           onInterrupt={() => void interrupt()}
