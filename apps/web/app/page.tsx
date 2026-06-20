@@ -673,6 +673,7 @@ function Console() {
           streaming={sessionBusy}
           disabled={composerLocked}
           prefill={draft}
+          persistKey={selectedId ?? "new"}
           placeholder={
             composerLocked
               ? "运行中·先接管…"

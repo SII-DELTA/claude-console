@@ -16,6 +16,25 @@ function loadVoiceMode(): boolean {
   return window.localStorage.getItem(VOICE_MODE_KEY) === "1";
 }
 
+const DRAFT_PREFIX = "mac.draft.";
+function loadDraft(key: string): string {
+  if (typeof window === "undefined") return "";
+  try {
+    return window.localStorage.getItem(DRAFT_PREFIX + key) ?? "";
+  } catch {
+    return "";
+  }
+}
+function saveDraft(key: string, text: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (text.trim()) window.localStorage.setItem(DRAFT_PREFIX + key, text);
+    else window.localStorage.removeItem(DRAFT_PREFIX + key); // don't accumulate empty drafts
+  } catch {
+    /* storage unavailable */
+  }
+}
+
 export function Composer({
   onSend,
   onInterrupt,
@@ -23,6 +42,7 @@ export function Composer({
   disabled,
   placeholder,
   prefill,
+  persistKey,
 }: {
   onSend: (text: string, images?: ClaudeImage[]) => void | boolean | Promise<void | boolean>;
   onInterrupt: () => void;
@@ -31,6 +51,8 @@ export function Composer({
   placeholder?: string;
   /** External text to drop into the input. Bump `nonce` to re-trigger even with the same text. */
   prefill?: { text: string; nonce: number };
+  /** Persist the unsent draft under this key (per session) so it survives switch/reload. */
+  persistKey?: string;
 }) {
   const [text, setText] = useState("");
   const [images, setImages] = useState<PickedImage[]>([]);
@@ -51,6 +73,24 @@ export function Composer({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefill?.nonce]);
+
+  // Per-session draft persistence: load the saved draft when entering a session, and save the
+  // outgoing draft when leaving it (switch/unmount) or on pagehide (reload/close). Saving on
+  // leave (not per-keystroke) avoids both storage churn and cross-key clobber.
+  const textRef = useRef(text);
+  textRef.current = text;
+  useEffect(() => {
+    if (!persistKey) return;
+    setText(loadDraft(persistKey));
+    const key = persistKey;
+    const saveNow = () => saveDraft(key, textRef.current);
+    window.addEventListener("pagehide", saveNow);
+    return () => {
+      saveNow();
+      window.removeEventListener("pagehide", saveNow);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [persistKey]);
 
   const api = useAppStore((s) => s.api);
   const setError = useAppStore((s) => s.setError);
@@ -95,15 +135,18 @@ export function Composer({
         if (ok === false) {
           setText(snapText);
           setImages(snapImages);
+          if (persistKey) saveDraft(persistKey, snapText); // send failed → keep the draft
           requestAnimationFrame(() => textareaRef.current?.focus());
         }
       })
       .catch(() => {
         setText(snapText);
         setImages(snapImages);
+        if (persistKey) saveDraft(persistKey, snapText);
       });
     setText("");
     setImages([]);
+    if (persistKey) saveDraft(persistKey, ""); // sent → drop the persisted draft immediately
   }
 
   const canRecord = () =>
