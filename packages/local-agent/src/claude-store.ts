@@ -546,6 +546,7 @@ export class ClaudeStore {
       assistantMessageCount: acc.assistantMessageCount,
       toolUseCount: acc.toolUseCount,
       modelId: acc.modelId,
+      contextTokens: acc.contextTokens,
       isLive,
       driving,
       drivenByAgent,

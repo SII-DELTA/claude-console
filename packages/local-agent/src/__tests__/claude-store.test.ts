@@ -81,6 +81,27 @@ describe("claude-jsonl parser", () => {
     expect(parseLine("not json")).toBeNull();
     expect(parseLine("")).toBeNull();
   });
+
+  it("extracts context tokens from an assistant turn's usage (input + cache read + creation)", () => {
+    const p = parseLine(
+      line({
+        type: "assistant",
+        uuid: "a1",
+        sessionId: "s1",
+        timestamp: "2026-06-11T00:00:02.000Z",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "hi" }],
+          usage: { input_tokens: 2704, cache_read_input_tokens: 15853, cache_creation_input_tokens: 3731, output_tokens: 456 },
+        },
+      }),
+    );
+    expect(p?.contextTokens).toBe(2704 + 15853 + 3731);
+    // accumulator keeps the latest turn's value
+    const acc = newAccumulator();
+    accumulate(acc, p!, false);
+    expect(acc.contextTokens).toBe(22288);
+  });
 });
 
 describe("deriveAttention", () => {

@@ -36,6 +36,12 @@ interface RawEntry {
     role?: string;
     model?: string;
     content?: string | RawContentBlock[];
+    usage?: {
+      input_tokens?: number;
+      output_tokens?: number;
+      cache_read_input_tokens?: number;
+      cache_creation_input_tokens?: number;
+    };
   };
 }
 
@@ -50,6 +56,9 @@ export interface ParsedLine {
   modelId?: string;
   /** raw timestamp on the line, used for updatedAt even on meta lines. */
   timestamp?: string;
+  /** total input context tokens of an assistant turn (input + cache read + cache creation) —
+   * the latest one approximates how full the context window currently is. */
+  contextTokens?: number;
 }
 
 function normalizeToolResultContent(content: unknown): string {
@@ -138,6 +147,12 @@ export function parseLine(line: string): ParsedLine | null {
     return out;
   }
 
+  if (entry.type === "assistant" && entry.message?.usage) {
+    const u = entry.message.usage;
+    out.contextTokens =
+      (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
+  }
+
   if (entry.type === "user" || entry.type === "assistant") {
     const role = entry.type === "user" ? "user" : "assistant";
     const blocks = mapBlocks(entry.message?.content);
@@ -179,6 +194,8 @@ export interface SessionAccumulator {
   lastRole?: "user" | "assistant";
   /** AskUserQuestion tool_use ids not yet answered by a non-error tool_result */
   openQuestionIds: Set<string>;
+  /** latest assistant turn's total input context tokens (≈ current context-window fill) */
+  contextTokens?: number;
 }
 
 export function newAccumulator(): SessionAccumulator {
@@ -197,6 +214,7 @@ export function accumulate(acc: SessionAccumulator, parsed: ParsedLine, keepMess
   if (parsed.cwd && !acc.cwd) acc.cwd = parsed.cwd;
   if (parsed.aiTitle) acc.aiTitle = parsed.aiTitle;
   if (parsed.modelId) acc.modelId = parsed.modelId;
+  if (parsed.contextTokens != null) acc.contextTokens = parsed.contextTokens; // latest turn wins
   if (parsed.timestamp && (!acc.lastTimestamp || parsed.timestamp > acc.lastTimestamp)) {
     acc.lastTimestamp = parsed.timestamp;
   }

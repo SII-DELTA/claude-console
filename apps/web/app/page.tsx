@@ -524,6 +524,7 @@ function Console() {
           <span className="min-w-0 flex-1 truncate text-sm font-medium">{selected?.title ?? "新会话"}</span>
           {selectedId && ideBadgeFor(ideState, selectedId) === "vscode" && <Badge tone="info">VSCode</Badge>}
           <div className="ml-auto flex shrink-0 items-center gap-1.5">
+            <CtxMeter tokens={selected?.contextTokens} />
             <UsageDisplay />
             <ConnDot ok={wsConnected} />
             <RefreshButton />
@@ -543,6 +544,7 @@ function Console() {
             ))}
           {selectedId && ideBadgeFor(ideState, selectedId) === "vscode" && <Badge tone="info">VSCode</Badge>}
           {selectedId && ideBadgeFor(ideState, selectedId) === "terminal" && <Badge tone="warn">终端</Badge>}
+          <CtxMeter tokens={selected?.contextTokens} />
           <UsageDisplay />
           <button onClick={() => setConnection(null)} className="btn-ghost !py-1 text-xs">
             断开
@@ -1125,6 +1127,28 @@ function Badge({ children, tone = "ok" }: { children: React.ReactNode; tone?: "o
         : "bg-success/20 text-success";
   return (
     <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${cls}`}>{children}</span>
+  );
+}
+
+/** Compact context-window occupancy: latest assistant turn's input tokens vs a 200k window. */
+function CtxMeter({ tokens }: { tokens?: number }) {
+  if (!tokens) return null;
+  // Adaptive window: a session already past 200k must be on the 1M beta, so scale to 1M;
+  // otherwise the standard 200k. The absolute number below is the honest signal regardless.
+  const MAX = tokens > 200_000 ? 1_000_000 : 200_000;
+  const pct = Math.min(100, Math.round((tokens / MAX) * 100));
+  const label = tokens >= 1000 ? `${(tokens / 1000).toFixed(tokens >= 100_000 ? 0 : 1)}k` : `${tokens}`;
+  const warn = pct >= 80;
+  return (
+    <span
+      className={`hidden shrink-0 items-center gap-1 text-[11px] sm:inline-flex ${warn ? "text-warning" : "text-ink-faint"}`}
+      title={`上下文占用 ≈ ${tokens.toLocaleString()} / ${MAX.toLocaleString()} tokens（${pct}%）。接近上限时用 /compact 压缩。`}
+    >
+      <span className="inline-block h-1.5 w-8 overflow-hidden rounded-full bg-line">
+        <span className={`block h-full ${warn ? "bg-warning" : "bg-accent/60"}`} style={{ width: `${pct}%` }} />
+      </span>
+      {label}
+    </span>
   );
 }
 

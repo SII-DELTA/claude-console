@@ -73,6 +73,8 @@ export const ClaudeSessionSchema = z.object({
   assistantMessageCount: z.number().int().nonnegative(),
   toolUseCount: z.number().int().nonnegative(),
   modelId: z.string().optional(),
+  /** 最近一轮 assistant 的总输入上下文 token（input + cache read + cache creation），≈ 当前上下文窗口占用 */
+  contextTokens: z.number().int().nonnegative().optional(),
   /** 文件近 LIVE_WINDOW_MS 内仍在写 → 该会话可能有活跃进程，接管前需提示 */
   isLive: z.boolean(),
   /** 该 live 是由本 agent 的 driver 进程驱动的（而非终端等外部）。 */
