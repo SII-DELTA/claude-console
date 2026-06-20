@@ -1100,10 +1100,14 @@ function Badge({ children, tone = "ok" }: { children: React.ReactNode; tone?: "o
 }
 
 function ConnDot({ ok }: { ok: boolean }) {
+  // Disconnected → show "重连中…" so the user knows why updates paused (we auto-retry with
+  // backoff; a foreground tap reconnects immediately). Connected → just the green dot.
   return (
-    <span
-      className={`inline-block h-2 w-2 rounded-full ${ok ? "bg-success" : "bg-ink-faint"}`}
-      title={ok ? "已连接" : "未连接"}
-    />
+    <span className="inline-flex items-center gap-1" title={ok ? "已连接" : "连接断开，正在重连"}>
+      <span
+        className={`inline-block h-2 w-2 rounded-full ${ok ? "bg-success" : "animate-pulse bg-warning"}`}
+      />
+      {!ok && <span className="text-[11px] text-warning">重连中…</span>}
+    </span>
   );
 }

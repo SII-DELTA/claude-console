@@ -1083,7 +1083,9 @@ function handleServerMessage(
     case "server:claude_driving": {
       // authoritative real-time run state (hook ∪ our driver). Patch the field so the
       // dashboard "正在运行" and the chat loading indicator update without a poll.
-      lastDrivingAt.set(msg.sessionId, Date.now()); // mark fresh so a stale snapshot won't revert it
+      // Mark fresh so a stale snapshot won't revert it; clear on stop so a real downgrade lands.
+      if (msg.driving) lastDrivingAt.set(msg.sessionId, Date.now());
+      else lastDrivingAt.delete(msg.sessionId);
       const patchDriving = (list: ClaudeSession[]) =>
         list.map((s) => (s.id === msg.sessionId ? { ...s, driving: msg.driving } : s));
       set({ sessions: patchDriving(get().sessions), allSessions: patchDriving(get().allSessions) });
@@ -1110,6 +1112,9 @@ function handleServerMessage(
       break;
     }
     case "server:claude_delta": {
+      // Streaming tokens prove the turn is live → keep the anti-flicker window fresh so a
+      // delayed/reordered session_updated snapshot can't revert `driving` to false mid-turn.
+      lastDrivingAt.set(msg.sessionId, Date.now());
       markRead(set, get, msg.sessionId); // first token of the reply → "已读·处理中"
       const cur = get().stream;
       if (get().driveStatus !== "streaming" || !cur) break;
