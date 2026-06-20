@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useMemo, useState } from "react";
+import { memo, useMemo, useState, type CSSProperties } from "react";
 import type { ClaudeMessage, ClaudeMessageBlock } from "@mac/shared";
 import { Markdown, OpenFileContext } from "./Markdown";
 import { ImageThumb } from "./ImageThumb";
@@ -49,16 +49,26 @@ export const Timeline = memo(function Timeline({
   return (
     <OpenFileContext.Provider value={onOpenFile ?? null}>
     <div className="space-y-3">
-      {groups.map((g, i) =>
-        g.kind === "user" ? (
-          <div key={g.item.id}>
-            <Row item={g.item} onFillInput={onFillInput} />
-            {sendStatus?.messageId === g.item.id && <SendReceipt state={sendStatus.state} />}
-          </div>
-        ) : (
-          <AssistantGroup key={i} items={g.items} />
-        ),
-      )}
+      {groups.map((g, i) => (
+        // content-visibility:auto lets the browser skip layout/paint for off-screen groups so a
+        // long transcript (unbounded "load earlier") scrolls smoothly without virtualization —
+        // every node stays in the DOM, so scroll-height math (load-earlier / scroll-to-bottom)
+        // is unaffected. contain-intrinsic-size:auto remembers each group's real height once
+        // rendered, keeping the scrollbar stable.
+        <div
+          key={g.kind === "user" ? g.item.id : `a${i}`}
+          style={{ contentVisibility: "auto", containIntrinsicSize: "auto 120px" } as CSSProperties}
+        >
+          {g.kind === "user" ? (
+            <>
+              <Row item={g.item} onFillInput={onFillInput} />
+              {sendStatus?.messageId === g.item.id && <SendReceipt state={sendStatus.state} />}
+            </>
+          ) : (
+            <AssistantGroup items={g.items} />
+          )}
+        </div>
+      ))}
     </div>
     </OpenFileContext.Provider>
   );
