@@ -71,6 +71,20 @@ export class WsClient {
     return this.socket?.readyState === WebSocket.OPEN;
   }
 
+  /** Proactively probe the link (e.g. on foreground resume): send a ping now and arm the
+   * pong watch. A zombie socket (server already terminated us while backgrounded, but the
+   * client froze before `close` fired) won't pong → the next heartbeat tick closes it and
+   * triggers a reconnect, instead of waiting up to a full ping interval to notice. */
+  ping(): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.awaitingPong = true;
+    try {
+      this.socket.send(JSON.stringify({ type: "client:ping", ts: Date.now() }));
+    } catch {
+      /* noop */
+    }
+  }
+
   private startHeartbeat(): void {
     this.stopHeartbeat();
     this.awaitingPong = false;

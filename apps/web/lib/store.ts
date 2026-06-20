@@ -34,6 +34,16 @@ function loadPermissionMode(): ClaudePermissionMode {
 
 /** pending WS auto-reconnect timer (module-scoped; one socket at a time) */
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+/** consecutive failed reconnects → exponential backoff (reset on a successful open or a
+ * foreground resume), so a prolonged agent outage doesn't hammer reconnects every 3s. */
+let reconnectAttempts = 0;
+const RECONNECT_BASE_MS = 3000;
+const RECONNECT_MAX_MS = 20000;
+function nextReconnectDelay(): number {
+  const d = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** reconnectAttempts);
+  reconnectAttempts += 1;
+  return d;
+}
 /** debounce so we only pre-warm a session you actually dwell on */
 let prewarmTimer: ReturnType<typeof setTimeout> | null = null;
 /** byte cursor for the open conversation's incremental tail sync (WS-as-hint model) */
@@ -513,6 +523,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       url: conn.wsUrl,
       token: conn.token,
       onOpen: () => {
+        reconnectAttempts = 0; // healthy link → reset backoff
         set({ wsConnected: true });
         // Resync the dashboard: session_updated events broadcast while we were
         // offline were missed, and an initial load that failed during an agent
@@ -539,7 +550,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         if (reconnectTimer) clearTimeout(reconnectTimer);
         reconnectTimer = setTimeout(() => {
           if (get().connection && !get().ws?.isOpen()) get().connectWs();
-        }, 3000);
+        }, nextReconnectDelay()); // exponential backoff; reset on open/resume
       },
       onMessage: (msg) => handleServerMessage(msg, set, get),
     });
@@ -568,9 +579,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     const STALE_AFTER_MS = 15_000;
     if (!ws || !ws.isOpen() || hiddenMs > STALE_AFTER_MS) {
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      reconnectAttempts = 0; // a user-driven resume → reconnect immediately, fresh backoff
       get().connectWs(); // onOpen refetches the lists + tail
     } else {
-      // socket trusted alive — refresh the dashboard lists + incrementally sync the tail
+      // socket trusted alive — but it may be a zombie (server terminated us mid-background
+      // before `close` fired). Probe it now so a dead link is caught within a heartbeat
+      // instead of silently delivering nothing. Refresh lists + sync the tail meanwhile.
+      ws.ping();
       void get().loadSessions();
       void get().loadAllSessions();
       if (selectedId && api) void syncTail(api, selectedId, set, get);
