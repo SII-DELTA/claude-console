@@ -46,6 +46,30 @@ function nextReconnectDelay(): number {
 }
 /** debounce so we only pre-warm a session you actually dwell on */
 let prewarmTimer: ReturnType<typeof setTimeout> | null = null;
+/** After injecting into a desktop VSCode session we don't drive it (no stream), so the reply
+ * only lands on disk. The fast poll's gate reads a sessions snapshot that's stale right after
+ * an inject, so poll a burst here until the desktop turn shows up (then isLive takes over). */
+let injectSyncTimer: ReturnType<typeof setInterval> | null = null;
+let injectSyncUntil = 0;
+function kickInjectSync(
+  set: (partial: Partial<AppState> | ((s: AppState) => Partial<AppState>)) => void,
+  get: () => AppState,
+): void {
+  injectSyncUntil = Date.now() + 90_000;
+  const st0 = get();
+  if (st0.selectedId && st0.api) void syncTail(st0.api, st0.selectedId, set, get); // pull now
+  if (injectSyncTimer) return; // already bursting; the line above just extended the window
+  injectSyncTimer = setInterval(() => {
+    if (Date.now() > injectSyncUntil) {
+      clearInterval(injectSyncTimer!);
+      injectSyncTimer = null;
+      return;
+    }
+    if (typeof document !== "undefined" && document.hidden) return; // resume handler will catch up
+    const st = get();
+    if (st.selectedId && st.api) void syncTail(st.api, st.selectedId, set, get);
+  }, 2500);
+}
 /** byte cursor for the open conversation's incremental tail sync (WS-as-hint model) */
 let tailCursor: { id: string; cursor: number } | null = null;
 /** guard against overlapping incremental syncs for the open conversation */
@@ -615,6 +639,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     const send = getVscodeSendMode() === "auto";
     try {
       const r = await api.ideInject(sessionId, text, send);
+      // We injected into the desktop session (not phone-driven) → its reply only lands on disk.
+      // Kick a sync burst so the user's message + the response show up promptly instead of
+      // waiting on a stale 20s poll. (No optimistic bubble — the tail pull is authoritative.)
+      if (r.ok) kickInjectSync(set, get);
       return { ok: r.ok, via: r.via, sent: r.sent };
     } catch (err) {
       set({ error: describeError(err) });
